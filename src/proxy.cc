@@ -1743,7 +1743,7 @@ void* ncclProxyService(void* _args) {
       }
       if (maxnpeers < s+1) maxnpeers = s+1;
       NCCLCHECKGOTO(ncclSocketInit(&peers[s].sock), ret, fail);
-      if (ncclSocketAccept(&peers[s].sock, proxyState->listenSock) != ncclSuccess) {
+      if (ncclSocketAccept(&peers[s].sock, proxyState->listenSock, false) != ncclSuccess) {
         INFO(NCCL_PROXY, "[Service thread] Accept failed %s", strerror(errno));
       } else {
         NCCLCHECKGOTO(ncclSocketGetFd(&peers[s].sock, &pollfds[s].fd), ret, fail);

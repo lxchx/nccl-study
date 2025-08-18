@@ -67,7 +67,8 @@ enum ncclSocketState {
   ncclSocketStateTerminating = 8,
   ncclSocketStateClosed = 9,
   ncclSocketStateError = 10,
-  ncclSocketStateNum = 11
+  ncclSocketStateBadMagic = 11,
+  ncclSocketStateNum = 12
 };
 
 enum ncclSocketType {
@@ -121,7 +122,7 @@ ncclResult_t ncclSocketConnect(struct ncclSocket* sock);
 // Return socket connection state.
 ncclResult_t ncclSocketReady(struct ncclSocket* sock, int *running);
 // Accept an incoming connection from listenSock->socketDescriptor and keep the file descriptor in sock->socketDescriptor, with the remote side IP/port in sock->addr.
-ncclResult_t ncclSocketAccept(struct ncclSocket* sock, struct ncclSocket* ulistenSock);
+ncclResult_t ncclSocketAccept(struct ncclSocket* sock, struct ncclSocket* ulistenSock, bool retryOnBadMagic = true);
 ncclResult_t ncclSocketGetFd(struct ncclSocket* sock, ncclSocketDescriptor* socketDescriptor);
 ncclResult_t ncclSocketSetFd(ncclSocketDescriptor socketDescriptor, struct ncclSocket* sock);
 

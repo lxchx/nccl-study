@@ -161,7 +161,7 @@ ncclResult_t ncclMakeSymmetricTaskList(struct ncclComm* comm, struct ncclTaskCol
             int collNetSupport = 0;
             int nvlsSupport = comm->nvlsSupport && (ncclNvlsSupported(task->opDev.op, headTask->datatype) || headTask->func == ncclFuncAllGather);
             NCCLCHECK(ncclGetCollNetSupport(comm, headTask, &collNetSupport));
-            NCCLCHECK(ncclGetAlgoInfo(comm, headTask, collNetSupport, nvlsSupport, 1));
+            NOWARN(ncclGetAlgoInfo(comm, headTask, collNetSupport, nvlsSupport, 1), NCCL_COLL);
             needFallback = (headTask->protocol != NCCL_PROTO_LL);
           }
         }

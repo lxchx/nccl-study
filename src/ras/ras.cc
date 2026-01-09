@@ -17,6 +17,7 @@
 #include "utils.h"
 #include "ras_internal.h"
 #include "os.h"
+#include "os_comm_pair.h"
 
 // Type of a notification from a local NCCL thread.
 typedef enum {
@@ -48,7 +49,7 @@ static std::thread rasThread;
 
 // Used for communication from regular NCCL threads to the RAS thread.
 static std::mutex rasNotificationMutex;
-static int rasNotificationPipe[2] = {-1, -1};
+static ncclCommPairDescriptor rasNotificationPipe[2] = {NCCL_COMM_PAIR_INVALID, NCCL_COMM_PAIR_INVALID};
 
 // Data for the main poll() in the RAS thread.
 struct pollfd* rasPfds;
@@ -103,7 +104,7 @@ ncclResult_t ncclRasCommInit(struct ncclComm* comm, struct rasRankInit* myRank) 
 
       (void)rasClientInitSocket();
 
-      SYSCHECKGOTO(pipe(rasNotificationPipe), "pipe", ret, fail);
+      NCCLCHECKGOTO(ncclOsCommPairCreate(rasNotificationPipe), ret, fail);
 
       rasThread = std::thread(rasThreadMain, nullptr);
       ncclSetThreadName(rasThread, "NCCL RAS");
@@ -137,10 +138,10 @@ ncclResult_t ncclRasCommInit(struct ncclComm* comm, struct rasRankInit* myRank) 
 exit:
   return ret;
 fail:
-  if (rasNotificationPipe[1] != 0)
-    (void)close(rasNotificationPipe[1]);
-  if (rasNotificationPipe[0] != 0)
-    (void)close(rasNotificationPipe[0]);
+  if (ncclOsCommPairIsValid(rasNotificationPipe[1]))
+    (void)ncclOsCommPairClose(rasNotificationPipe[1]);
+  if (ncclOsCommPairIsValid(rasNotificationPipe[0]))
+    (void)ncclOsCommPairClose(rasNotificationPipe[0]);
   (void)close(rasClientListeningSocket);
   (void)ncclSocketClose(&rasNetListeningSocket);
   goto exit;
@@ -198,8 +199,8 @@ static ncclResult_t rasLocalNotify(const struct rasNotification* msg) {
   std::lock_guard<std::mutex> lock(rasNotificationMutex);
   size_t done = 0;
   while (done < sizeof(*msg)) {
-    ssize_t written;
-    SYSCHECK(written = write(rasNotificationPipe[1], (char*)msg + done, sizeof(*msg) - done), "write");
+    size_t written;
+    NCCLCHECK(ncclOsCommPairWrite(rasNotificationPipe[1], (char*)msg + done, sizeof(*msg) - done, &written));
     done += written;
   }
   return ncclSuccess;
@@ -216,8 +217,8 @@ static ncclResult_t rasLocalHandle(bool* terminate) {
 
   size_t done = 0;
   while (done < sizeof(msg)) {
-    ssize_t nread;
-    SYSCHECK(nread = read(rasNotificationPipe[0], (char*)&msg + done, sizeof(msg) - done), "read");
+    size_t nread;
+    NCCLCHECK(ncclOsCommPairRead(rasNotificationPipe[0], (char*)&msg + done, sizeof(msg) - done, &nread));
     if (nread == 0) // EOF
       return ncclSystemError;
     done += nread;
@@ -246,10 +247,10 @@ static void rasThreadCleanup() {
 
   {
     std::lock_guard<std::mutex> lock(rasInitMutex);
-    (void)close(rasNotificationPipe[1]);
-    (void)close(rasNotificationPipe[0]);
+    (void)ncclOsCommPairClose(rasNotificationPipe[1]);
+    (void)ncclOsCommPairClose(rasNotificationPipe[0]);
     // rasClientListeningSocket is taken care of by rasClientSupportTerminate().
-    rasNotificationPipe[0] = rasNotificationPipe[1] = -1;
+    rasNotificationPipe[0] = rasNotificationPipe[1] = NCCL_COMM_PAIR_INVALID;
     (void)ncclSocketClose(&rasNetListeningSocket);
     rasInitRefCount = 0;
     rasInitialized = false;

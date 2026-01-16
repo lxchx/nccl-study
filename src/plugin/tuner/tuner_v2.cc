@@ -55,6 +55,7 @@ static ncclResult_t ncclTuner_init(void** ctx, uint64_t commId, size_t nRanks, s
                                    ncclNvlDomainInfo_v5_t* nvlDomainInfo, ncclTunerConstants_t* /*constants*/) {
   NCCLCHECK(ncclTuner_v2->init(nRanks, nNodes, logfn, ctx));
   ncclTuner.getCollInfo = ncclTuner_getCollInfo;
+  ncclTuner.getChunkSize = NULL;
   ncclTuner.finalize = ncclTuner_finalize;
   return ncclSuccess;
 }

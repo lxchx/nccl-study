@@ -67,7 +67,7 @@ struct ginProxyCtx {
   void *signalsMhandle;
   void *signalsGinHandle;
   uint64_t *signalsDev;
-  int hasError;
+  bool hasError;
   int nContexts;
   int nCountersPerContext;
   int nSignalsPerContext;
@@ -112,15 +112,24 @@ static ncclResult_t proxyGinPollCompletions(void *collComm,
         &hostGpuCtx->states[targetRank * hostGpuCtx->queueSize + idx];
       // no need to poll if already done
       if (!state->done) {
-        ginBackend->test(collComm, state->request, &state->done);
+        ncclResult_t res = ginBackend->test(collComm, state->request, &state->done);
+        if (res != ncclSuccess) {
+            ctx->hasError = true;
+            WARN("Error on GFD test %d - stateIdx: %lu, request: %p", res, state - hostGpuCtx->states, state->request);
+            return res;
+        }
         if (state->done) {
           TRACE(NCCL_NET, "GFD completed - contextId: %d, stateIdx: %lu, request: %p", hostGpuCtx->contextId, state - hostGpuCtx->states,
                 state->request);
           // update the counter specified in the GFD
           if (state->op & ncclGinProxyOpWithCounter) {
+            // Atomic load and atomic store are used here to ensure that they are volatile.
+            // The GPU kernel is not allowed to reset the counter whilst there are outstanding operations.
+            // Thus the add does not need to be atomic.
             int contextId = hostGpuCtx->contextId;
             uint64_t* counterPtr = &ctx->counters[contextId * ctx->nCountersPerContext + state->counterId];
-            COMPILER_ATOMIC_STORE(counterPtr, *counterPtr + 1,
+            uint64_t oldValue = COMPILER_ATOMIC_LOAD(counterPtr, std::memory_order_relaxed);
+            COMPILER_ATOMIC_STORE(counterPtr, oldValue + 1,
                               std::memory_order_relaxed);
             TRACE(NCCL_NET, "Updated counter %d to %ld for context %d", state->counterId,
                   *counterPtr, contextId);

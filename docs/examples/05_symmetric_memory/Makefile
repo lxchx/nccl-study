@@ -6,7 +6,7 @@
 #
 
 # NCCL Shared Memory Examples
-EXAMPLES = 01_allreduce
+EXAMPLES = 01_allreduce 02_allgather
 
 # Default target
 all: $(EXAMPLES)
@@ -41,8 +41,10 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  01_allreduce - AllReduce collective operation"
+	@echo "  02_allgather - AllGather collective operation with Copy Engine"
 	@echo ""
 	@echo "To build/run individual examples:"
 	@echo "  make -C 01_allreduce"
+	@echo "  make -C 02_allgather"
 
 .PHONY: all clean test help $(EXAMPLES)

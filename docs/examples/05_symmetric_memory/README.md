@@ -27,6 +27,19 @@ consistent memory layouts.
   - Collective operations executed on symmetric windows
   - Correct deregistration and cleanup
 
+### [02_allgather](02_allgather/)
+**AllGather with Symmetric Memory Windows and Copy Engine**
+- **Pattern**: Register symmetric windows and use copy engine for zero SM usage
+- **API**: `ncclCommInitRankConfig`, `ncclCommWindowRegister`,
+  `ncclCommWindowDeregister`, `ncclMemAlloc`, `ncclAllGather`
+- **Use case**: Large-scale collectives with computation overlap
+- **Key features**:
+  - NCCL config with `CTAPolicy=2` to enable copy engine
+  - Zero SM usage during collective operations
+  - Enables true overlap of communication with computation
+  - Buffers allocated via `ncclMemAlloc` for symmetric compatibility
+  - Higher peak bandwidth for large message sizes (higher latency for small messages)
+
 ## Choosing the Right Pattern
 
 *Scenario* : Large-scale training with consistent memory patterns
@@ -57,6 +70,7 @@ NCCLCHECK(ncclMemFree(buffer));
 ```shell
 # Build example by directory name
 make 01_allreduce
+make 02_allgather
 ```
 
 ### **Individual Examples**
@@ -64,6 +78,10 @@ make 01_allreduce
 # Build and run AllReduce with symmetric windows
 cd 01_allreduce && make
 ./allreduce_sm
+
+# Build and run AllGather with symmetric windows + copy engine
+cd 02_allgather && make
+./allgather_ce
 ```
 
 ## References

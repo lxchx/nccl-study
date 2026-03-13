@@ -14,11 +14,12 @@ tags
 
 # Example build artifacts
 *.o
-examples/**/multiple_devices_single_process
-examples/**/one_device_per_pthread
-examples/**/one_device_per_process_mpi
-examples/**/ring_pattern
-examples/**/allreduce
-examples/**/allreduce_ub
-examples/**/allreduce_sm
-examples/**/allreduce_device_api
+docs/examples/**/multiple_devices_single_process
+docs/examples/**/one_device_per_pthread
+docs/examples/**/one_device_per_process_mpi
+docs/examples/**/ring_pattern
+docs/examples/**/allreduce
+docs/examples/**/allreduce_ub
+docs/examples/**/allreduce_sm
+docs/examples/**/allgather_ce
+docs/examples/**/allreduce_device_api

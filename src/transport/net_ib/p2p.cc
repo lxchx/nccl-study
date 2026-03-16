@@ -649,6 +649,7 @@ static ncclResult_t ncclIbLogCompletionWithError(struct ncclIbNetCommBase* commB
       sockStr, ibvWcStatusStr(wc->status), wc->status,
       ibvWcOpcodeStr(wc->opcode), wc->opcode, wc->vendor_err,
       localGidStr ?  " localGid ":"", localGidString, remoteGidStr ? " remoteGids":"", remoteGidString, hcaName);
+  printIbWcStatusHint(wc->status);
   return ncclSuccess;
 }
 

@@ -288,6 +288,23 @@ print:
   return;
 }
 
+static void printIbModifyQpHint(int status) {
+  switch (status) {
+    case ETIMEDOUT:
+      INFO(NCCL_NET, "HINT: In many cases this error occurs when NICs are not cross-rail connected.");
+      INFO(NCCL_NET, "HINT: To confirm, you can set NCCL_CROSS_NIC=0 to disable cross-rail communication.");
+      INFO(NCCL_NET, "HINT: See https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-cross-nic for more information.");
+      return;
+    case EINVAL:
+      INFO(NCCL_NET, "HINT: In many cases this error occurs when the incorrect GID index is forced by NCCL_IB_GID_INDEX");
+      INFO(NCCL_NET, "HINT: To confirm and fix the problem, you can set NCCL_IB_GID_INDEX=-1 to enable automatic detection.");
+      INFO(NCCL_NET, "HINT: See https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-ib-gid-index for more information.");
+      return;
+    default:
+      break;
+  }
+}
+
 ncclResult_t wrap_ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int attr_mask) {
   char qpMsg[1024];
   int ret = 0, attempts = 0;
@@ -308,6 +325,7 @@ ncclResult_t wrap_ibv_modify_qp(struct ibv_qp* qp, struct ibv_qp_attr* attr, int
   if (ret != 0) {
     ibvModifyQpLog(qp, attr->qp_state, attr, attr_mask, qpMsg, sizeof(qpMsg));
     WARN("Call to ibv_modify_qp failed with %d %s, %s", ret, strerror(ret), qpMsg);
+    printIbModifyQpHint(ret);
     return ncclSystemError;
   }
   return ncclSuccess;

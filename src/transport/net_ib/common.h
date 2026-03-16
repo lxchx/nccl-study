@@ -586,5 +586,22 @@ ncclResult_t ncclIbFinalizeDevices(void);
 ncclResult_t ncclIbFinalize(void* ctx);
 ncclResult_t ncclIbSetNetAttr(void *ctx, ncclNetAttr_t *netAttr);
 
+static inline void printIbWcStatusHint(int status) {
+  switch (status) {
+    case IBV_WC_LOC_PROT_ERR:
+      INFO(NCCL_NET, "HINT: In many cases this error occurs when ACS is enabled which would break GPU Direct RDMA protocol.");
+      INFO(NCCL_NET, "HINT: To confirm and fix the problem, you can set NCCL_NET_GDR_LEVEL=0 to disable ACS following vendor documentation.");
+    case IBV_WC_WR_FLUSH_ERR:
+      INFO(NCCL_NET, "HINT: In many cases this error occurs when NIC on the same instance cannot talk to each other.");
+    case IBV_WC_RETRY_EXC_ERR:
+      INFO(NCCL_NET, "HINT: In many cases this error occurs when the NCCL_IB_TIMEOUT is set too short.");
+      INFO(NCCL_NET, "HINT: Default value is 20, which is ~30 seconds before error.");
+      INFO(NCCL_NET, "HINT: To confirm, try increasing the value of NCCL_IB_TIMEOUT and see if the error persists.");
+      INFO(NCCL_NET, "HINT: See https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-ib-timeout for more information.");
+    default:
+      break;
+  }
+}
+
 #endif
 

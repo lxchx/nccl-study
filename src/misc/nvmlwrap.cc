@@ -40,6 +40,11 @@ namespace {
   NCCL_NVML_FN(nvmlDeviceGetCudaComputeCapability, nvmlReturn_t, (nvmlDevice_t device, int* major, int* minor))
   NCCL_NVML_FN(nvmlDeviceGetP2PStatus, nvmlReturn_t, (nvmlDevice_t device1, nvmlDevice_t device2, nvmlGpuP2PCapsIndex_t p2pIndex, nvmlGpuP2PStatus_t* p2pStatus))
   NCCL_NVML_FN(nvmlDeviceGetFieldValues, nvmlReturn_t, (nvmlDevice_t device, int valuesCount, nvmlFieldValue_t *values))
+  NCCL_NVML_FN(nvmlDeviceGetPciInfo_v3, nvmlReturn_t, (nvmlDevice_t device, nvmlPciInfo_t *pciInfo))
+  NCCL_NVML_FN(nvmlDeviceGetPciInfoExt, nvmlReturn_t, (nvmlDevice_t device, nvmlPciInfoExt_t *pciInfoExt))
+  NCCL_NVML_FN(nvmlDeviceGetPcieLinkMaxSpeed, nvmlReturn_t, (nvmlDevice_t device, int *maxSpeed))
+  NCCL_NVML_FN(nvmlDeviceGetCurrPcieLinkGeneration, nvmlReturn_t, (nvmlDevice_t device, unsigned int *currLinkGen))
+  NCCL_NVML_FN(nvmlDeviceGetCurrPcieLinkWidth, nvmlReturn_t, (nvmlDevice_t device, unsigned int *currLinkWidth))
   // MNNVL support
   NCCL_NVML_FN(nvmlDeviceGetGpuFabricInfoV, nvmlReturn_t, (nvmlDevice_t device, nvmlGpuFabricInfoV_t *gpuFabricInfo))
   NCCL_NVML_FN(nvmlDeviceGetPlatformInfo, nvmlReturn_t, (nvmlDevice_t device, nvmlPlatformInfo_t *platfromInfo))
@@ -95,6 +100,11 @@ ncclResult_t ncclNvmlEnsureInitialized() {
       {(void**)&pfn_nvmlDeviceGetCudaComputeCapability, "nvmlDeviceGetCudaComputeCapability"},
       {(void**)&pfn_nvmlDeviceGetP2PStatus, "nvmlDeviceGetP2PStatus"},
       {(void**)&pfn_nvmlDeviceGetFieldValues, "nvmlDeviceGetFieldValues"},
+      {(void**)&pfn_nvmlDeviceGetPciInfo_v3, "nvmlDeviceGetPciInfo_v3"},
+      {(void**)&pfn_nvmlDeviceGetPciInfoExt, "nvmlDeviceGetPciInfoExt"},
+      {(void**)&pfn_nvmlDeviceGetPcieLinkMaxSpeed, "nvmlDeviceGetPcieLinkMaxSpeed"},
+      {(void**)&pfn_nvmlDeviceGetCurrPcieLinkGeneration, "nvmlDeviceGetCurrPcieLinkGeneration"},
+      {(void**)&pfn_nvmlDeviceGetCurrPcieLinkWidth, "nvmlDeviceGetCurrPcieLinkWidth"},
       // MNNVL support
       {(void**)&pfn_nvmlDeviceGetGpuFabricInfoV, "nvmlDeviceGetGpuFabricInfoV"},
       {(void**)&pfn_nvmlDeviceGetPlatformInfo, "nvmlDeviceGetPlatformInfo"},
@@ -310,6 +320,42 @@ ncclResult_t ncclNvmlDeviceGetPlatformInfo(nvmlDevice_t device, nvmlPlatformInfo
   return ncclSuccess;
 }
 
+ncclResult_t ncclNvmlDeviceGetPciInfo(nvmlDevice_t device,  nvmlPciInfo_t* pciInfo) {
+  NCCLCHECK(ncclNvmlEnsureInitialized());
+  std::lock_guard<std::mutex> locked(lock);
+  NVMLCHECK(nvmlDeviceGetPciInfo_v3, device, pciInfo);
+  return ncclSuccess;
+}
+
+ncclResult_t ncclNvmlDeviceGetPciInfoExt(nvmlDevice_t device,  nvmlPciInfoExt_t* pciInfoExt) {
+  NCCLCHECK(ncclNvmlEnsureInitialized());
+  std::lock_guard<std::mutex> locked(lock);
+  INFO(NCCL_GRAPH, "ncclNvmlDeviceGetPciInfoExt: nvmlPciInfoExt_v1: %u", nvmlPciInfoExt_v1);
+  pciInfoExt->version = nvmlPciInfoExt_v1;
+  NVMLCHECK(nvmlDeviceGetPciInfoExt, device, pciInfoExt);
+  return ncclSuccess;
+}
+
+ncclResult_t ncclNvmlDeviceGetPcieLinkMaxSpeed(nvmlDevice_t device, int *maxSpeed) {
+  NCCLCHECK(ncclNvmlEnsureInitialized());
+  std::lock_guard<std::mutex> locked(lock);
+  NVMLCHECK(nvmlDeviceGetPcieLinkMaxSpeed, device, maxSpeed);
+  return ncclSuccess;
+}
+
+ncclResult_t ncclNvmlDeviceGetCurrPcieLinkGeneration(nvmlDevice_t device, unsigned int *currLinkGen) {
+  NCCLCHECK(ncclNvmlEnsureInitialized());
+  std::lock_guard<std::mutex> locked(lock);
+  NVMLCHECK(nvmlDeviceGetCurrPcieLinkGeneration, device, currLinkGen);
+  return ncclSuccess;
+}
+
+ncclResult_t ncclNvmlDeviceGetCurrPcieLinkWidth(nvmlDevice_t device, unsigned int *currLinkWidth) {
+  NCCLCHECK(ncclNvmlEnsureInitialized());
+  std::lock_guard<std::mutex> locked(lock);
+  NVMLCHECK(nvmlDeviceGetCurrPcieLinkWidth, device, currLinkWidth);
+  return ncclSuccess;
+}
 
 ncclResult_t ncclNvmlGetCCStatus(struct ncclNvmlCCStatus *status) {
   NCCLCHECK(ncclNvmlEnsureInitialized());

@@ -78,11 +78,12 @@ int ncclOsGetCpu();
 
 ncclResult_t ncclOsGetNumaNodeAffinity(unsigned int numaId, char* affinityStr, size_t maxLen);
 
+ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass, size_t maxLen);
+
 #if NCCL_OS_WINDOWS
 // Forward declare nvmlDevice_t to avoid including nvml.h
 struct nvmlDevice_st;
 typedef struct nvmlDevice_st* nvmlDevice_t;
-ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass, size_t maxLen);
 ncclResult_t ncclOsGetPciDeviceParent(nvmlDevice_t device, char** parentBusId);
 #endif
 

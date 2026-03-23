@@ -15,6 +15,9 @@
 #include <stdlib.h>
 #include <cinttypes>
 
+// PCI device class for NVSwitch (used to identify remote NVLink targets)
+#define PCI_NVSWITCH_CLASS "0x068000"
+
 // A few constraints to make the implementation easy
 #define MAX_STR_LEN 255
 #define MAX_ATTR_COUNT 16

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
+#include "gdrwrap.h"
 
 ncclResult_t ncclTopoCudaPath(int cudaDev, char** path);
 
@@ -48,7 +49,17 @@ enum ncclTopoGdrMode {
   ncclTopoGdrModeNum = 3
 };
 ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* topo, int rank, int64_t netId, int read, enum ncclTopoGdrMode* gdrMode);
-ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev, int rank, int* flush);
+
+enum ncclTopoFlushType {
+  ncclTopoFlushNone = 0,   // no flush needed
+  ncclTopoFlushAlways = 1, // flush always needed
+  ncclTopoFlushC2c = 2     // PCIe NIC and C2C sync path are unordered, flush is needed.
+};
+static inline uint32_t ncclGdcPinFlag(enum ncclTopoFlushType flush) {
+  if (flush == ncclTopoFlushC2c && ncclGdrPinV2Available()) return GDR_PIN_FLAG_FORCE_PCIE;
+  return GDR_PIN_FLAG_DEFAULT;
+}
+ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev, int rank, enum ncclTopoFlushType* flush);
 ncclResult_t ncclTopoGetMinNetBw(struct ncclTopoSystem* system, int rank, float* bw);
 ncclResult_t ncclTopoIsGdrAvail(struct ncclTopoSystem* system, int rank, bool *avail);
 ncclResult_t ncclTopoCheckNet(struct ncclTopoSystem* system, int rank1, int rank2, int* net);

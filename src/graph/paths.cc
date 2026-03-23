@@ -530,9 +530,9 @@ ncclResult_t ncclTopoIsGdrAvail(struct ncclTopoSystem* system, int rank, bool *a
 // Set to 0 to disable the flush on Hopper when using GDR
 NCCL_PARAM(NetForceFlush, "NET_FORCE_FLUSH", 0);
 
-// Determine whether we need to flush the GDR recv buffers
-ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev, int rank, int* flush) {
-  *flush = 1;
+// Based on the system topology, determine whether an explicit iflush is needed on the GDR recv path.
+ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev, int rank, enum ncclTopoFlushType* flush) {
+  *flush = ncclTopoFlushAlways;
   ncclNetProperties_t props;
   NCCLCHECK(comm->ncclNet->getProperties(netDev, &props));
   if (props.forceFlush == 1 || ncclParamNetForceFlush()) return ncclSuccess;
@@ -541,14 +541,15 @@ ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev,
   NCCLCHECK(ncclTopoRankToIndex(system, rank, &g, /*showWarn=*/true));
   struct ncclTopoNode* gpu = system->nodes[GPU].nodes+g;
   // Flush is required on Ampere and earlier
-  if (gpu->gpu.cudaCompCap >= 90) *flush = 0;
-  // On C2C platforms, data could go through a PCI switch while completions and
-  // flags would go through C2C. In that case, force a flush.
-  int c, n;
-  NCCLCHECK(ncclGetLocalCpu(system, g, &c));
-  NCCLCHECK(ncclTopoIdToIndex(system, NET, netId, &n));
-  if (gpu->paths[NET][n].type <= PATH_PXB && gpu->paths[CPU][c].type == PATH_C2C) {
-    *flush = 1;
+  if (gpu->gpu.cudaCompCap >= 90) {
+    *flush = ncclTopoFlushNone;
+    // DataDirect NIC require a flush operation because control path is using C2C and data path is using PCIe.
+    int c, n;
+    NCCLCHECK(ncclGetLocalCpu(system, g, &c));
+    NCCLCHECK(ncclTopoIdToIndex(system, NET, netId, &n));
+    if (gpu->paths[NET][n].type <= PATH_PXB && gpu->paths[CPU][c].type == PATH_C2C) {
+      *flush = ncclTopoFlushC2c;
+    }
   }
   return ncclSuccess;
 }

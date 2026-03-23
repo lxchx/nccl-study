@@ -18,6 +18,13 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <mutex>
+
+/* Cached socket transport device counts (populated during ncclNetInit) */
+static int winNetPhysDev = 0;
+static int winNetVirtDev = -1;  /* NCCL_UNDEF_DEV_COUNT */
+static bool winNetInitialized = false;
+static std::mutex winNetInitMutex;
 
 /* --------------------------------------------------------------------------
  * RAS (Linux-only) stubs
@@ -45,8 +52,24 @@ ncclResult_t ncclRasCommFini(const struct ncclComm* comm) {
 ncclResult_t ncclNetInit(struct ncclComm* comm) {
   comm->ncclNet = &ncclNetSocket;
   comm->ncclCollNet = nullptr;
-  comm->netContext = nullptr;
   comm->netPluginIndex = -1;
+
+  // Initialize the socket transport to enumerate network interfaces.
+  ncclNetCommConfig_t commConfig = {};
+  commConfig.trafficClass = NCCL_NET_TRAFFIC_CLASS_UNDEF;
+  NCCLCHECK(comm->ncclNet->init(&comm->netContext, comm->commHash,
+                                 &commConfig, ncclDebugLog, NULL));
+
+  {
+    std::lock_guard<std::mutex> lock(winNetInitMutex);
+    if (!winNetInitialized) {
+      int ndev = 0;
+      NCCLCHECK(comm->ncclNet->devices(&ndev));
+      winNetPhysDev = ndev;
+      winNetInitialized = true;
+    }
+  }
+
   return ncclSuccess;
 }
 
@@ -91,14 +114,14 @@ const char* ncclEnvPluginGetEnv(const char* name) {
  * -------------------------------------------------------------------------- */
 ncclResult_t ncclNetGetDevCount(int netPluginIndex, int* nPhysDev, int* nVirtDev) {
   (void)netPluginIndex;
-  *nPhysDev = 0;
-  *nVirtDev = 0;
+  *nPhysDev = winNetPhysDev;
+  *nVirtDev = winNetVirtDev;
   return ncclSuccess;
 }
 
 ncclResult_t ncclNetSetVirtDevCount(int netPluginIndex, int nVirtDev) {
   (void)netPluginIndex;
-  (void)nVirtDev;
+  winNetVirtDev = nVirtDev;
   return ncclSuccess;
 }
 

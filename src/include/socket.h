@@ -23,7 +23,11 @@
 #endif
 
 #define MAX_IFS 16
+#if NCCL_OS_LINUX
 #define MAX_IF_NAME_SIZE 16
+#elif NCCL_OS_WINDOWS
+#define MAX_IF_NAME_SIZE 64
+#endif
 #if defined(__CUDA_ARCH__) || (!defined(NCCL_OS_WINDOWS) && !defined(NCCL_OS_LINUX))
 /* Device compilation or stub build (no OS): no system socket headers; use placeholder for union size. */
 #ifndef NI_MAXHOST

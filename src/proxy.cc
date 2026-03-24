@@ -1665,8 +1665,16 @@ void* ncclProxyService(void* _args) {
   ncclResult_t ret;
   struct pollfd* pollfds = NULL;
   struct ncclProxyLocalPeer* peers = NULL;
+#if defined(NCCL_OS_WINDOWS)
+  struct pollfd* activePollfds = NULL;
+  int* activePollSlots = NULL;
+#endif
   NCCLCHECKGOTO(ncclCalloc(&pollfds, maxProxyConnections + 1), ret, fail);
   NCCLCHECKGOTO(ncclCalloc(&peers, maxProxyConnections), ret, fail);
+#if defined(NCCL_OS_WINDOWS)
+  NCCLCHECKGOTO(ncclCalloc(&activePollfds, maxProxyConnections + 1), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&activePollSlots, maxProxyConnections + 1), ret, fail);
+#endif
   for (int s = 0; s < maxProxyConnections; s++) {
     pollfds[s].fd = NCCL_INVALID_SOCKET;
     pollfds[s].events = POLLHUP|POLLIN;
@@ -1697,9 +1705,18 @@ void* ncclProxyService(void* _args) {
       ret = poll(pollfds, maxProxyConnections + 1, timeout);
     } while (ret < 0 && errno == EINTR);
 #elif defined(NCCL_OS_WINDOWS)
-    int nfds_to_poll = 1 + maxnpeers;
+    int nfds_to_poll = 0;
+    pollfds[maxProxyConnections].revents = 0;
+    activePollSlots[nfds_to_poll] = maxProxyConnections;
+    activePollfds[nfds_to_poll++] = pollfds[maxProxyConnections];
+    for (int s=0; s<maxnpeers; s++) {
+      if (pollfds[s].fd == NCCL_INVALID_SOCKET) continue;
+      pollfds[s].revents = 0;
+      activePollSlots[nfds_to_poll] = s;
+      activePollfds[nfds_to_poll++] = pollfds[s];
+    }
     do {
-      ret = WSAPoll((WSAPOLLFD*)pollfds, nfds_to_poll, timeout);
+      ret = WSAPoll((WSAPOLLFD*)activePollfds, nfds_to_poll, timeout);
       if (ret < 0) {
         int wsaError = WSAGetLastError();
         WARN("[Proxy Service] WSAPoll failed: error=%d", wsaError);
@@ -1708,6 +1725,9 @@ void* ncclProxyService(void* _args) {
         }
       }
     } while (ret < 0);
+    for (int i=0; i<nfds_to_poll; i++) {
+      pollfds[activePollSlots[i]].revents = activePollfds[i].revents;
+    }
 #endif
     if (ret < 0) {
       WARN("[Proxy Service] Poll failed: %s", strerror(errno));
@@ -1825,6 +1845,10 @@ void* ncclProxyService(void* _args) {
   free(proxyState->listenSock);
   proxyOpsFree(proxyState);
 fail:
+#if defined(NCCL_OS_WINDOWS)
+  free(activePollfds);
+  free(activePollSlots);
+#endif
   free(pollfds);
   free(peers);
   return NULL;

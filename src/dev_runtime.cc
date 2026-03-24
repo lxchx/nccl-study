@@ -340,8 +340,8 @@ static ncclResult_t symBindTeamMemory(
       if (mem->globalHasSysmemSegment) {
         INFO(NCCL_NVLS, "Skipping bind multicast for maxGlobalNumSegments = %d, big=%lx, team {%d x %d}", mem->maxGlobalNumSegments, mem->bigOffset, tm->team.nRanks, tm->team.stride);
       } else {
-        INFO(NCCL_NVLS, "Binding multicast memory at big=%lx to team {%d x %d}", mem->bigOffset, tm->team.nRanks, tm->team.stride);
-        CUCHECK(cuMulticastBindAddr(tm->mcHandle, mem->bigOffset, reinterpret_cast<CUdeviceptr>(mem->primaryAddr), mem->size, 0));
+        INFO(NCCL_NVLS, "Binding multicast memory at big=%lx size=%zu to team {%d x %d}", mem->bigOffset, mem->lsaMinSize, tm->team.nRanks, tm->team.stride);
+        CUCHECK(cuMulticastBindAddr(tm->mcHandle, mem->bigOffset, reinterpret_cast<CUdeviceptr>(mem->primaryAddr), mem->lsaMinSize, 0));
       }
   #endif
   }
@@ -353,7 +353,7 @@ static ncclResult_t symUnbindTeamMemory(
   ) {
   if (comm->nvlsSupport && tm->mcBasePtr != nullptr && !mem->globalHasSysmemSegment) {
   #if CUDART_VERSION >= 12010
-      CUCHECK(cuMulticastUnbind(tm->mcHandle, comm->cudaDev, mem->bigOffset, mem->size));
+      CUCHECK(cuMulticastUnbind(tm->mcHandle, comm->cudaDev, mem->bigOffset, mem->lsaMinSize));
   #endif
   }
   return ncclSuccess;
@@ -537,31 +537,11 @@ static ncclResult_t symMemoryObtain(
   ncclResult_t ret = ncclSuccess;
   struct ncclDevrState* devr = &comm->devrState;
   int64_t bigOffset = 0;
-  struct segmentInfo { int numSegments; bool hasSysmemSegment; };
+  struct segmentInfo { int numSegments; bool hasSysmemSegment; size_t totalSize; };
   struct segmentInfo* globalSegmentInfo = nullptr;
   const int globalLsaTeamBaseIdx = devr->lsaSize * (comm->rank / devr->lsaSize);
 
-  struct ncclDevrMemory* mem = devr->memHead;
-  while (mem != nullptr) {
-    if (mem->primaryAddr == memAddr && mem->size == size && mem->numSegments == numSegments) {
-      // Check if all memHandles that [memAddr, memAddr + size] spans also match
-      bool allMatch = true;
-      for (int segment = 0; segment < mem->numSegments; segment++) {
-        if (mem->memHandles[segment] != memHandles[segment]) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch) {
-        for (int segment = 0; segment < mem->numSegments; segment++) {
-          CUCHECKIGNORE(cuMemRelease(memHandles[segment]));
-        }
-        goto leave;
-      }
-    }
-    mem = mem->next;
-  }
-
+  struct ncclDevrMemory* mem = nullptr;
   // New memory.
   NCCLCHECKGOTO(ncclCalloc(&mem, 1), ret, fail_mem);
   NCCLCHECKGOTO(ncclCalloc(&mem->memHandles, numSegments), ret, fail_mem);
@@ -580,6 +560,7 @@ static ncclResult_t symMemoryObtain(
   // We need max segments and global sysmem info to selectively disable some features
   globalSegmentInfo[comm->rank].numSegments = numSegments;
   globalSegmentInfo[comm->rank].hasSysmemSegment = hasSysmemSegment;
+  globalSegmentInfo[comm->rank].totalSize = size;
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, globalSegmentInfo, sizeof(*globalSegmentInfo)), ret, fail_mem);
   mem->globalHasSysmemSegment = false;
   for (int r = 0; r < comm->nRanks; r++) {
@@ -590,12 +571,17 @@ static ncclResult_t symMemoryObtain(
   }
 
   NCCLCHECKGOTO(ncclCalloc(&mem->lsaNumSegments, devr->lsaSize), ret, fail_mem);
+  mem->lsaMinSize = size;
+  mem->lsaMaxSize = size;
   for (int r = 0; r < devr->lsaSize; r++) {
-    mem->lsaNumSegments[r] = globalSegmentInfo[globalLsaTeamBaseIdx + r].numSegments;
+    int rank = globalLsaTeamBaseIdx + r;
+    mem->lsaNumSegments[r] = globalSegmentInfo[rank].numSegments;
+    mem->lsaMinSize = std::min(mem->lsaMinSize, globalSegmentInfo[rank].totalSize);
+    mem->lsaMaxSize = std::max(mem->lsaMaxSize, globalSegmentInfo[rank].totalSize);
   }
 
-  // Grab offset in the big space.
-  NCCLCHECKGOTO(ncclSpaceAlloc(&devr->bigSpace, devr->bigSize, size, devr->granularity, &bigOffset), ret, fail_mem);
+  // Grab offset in the big space. Use lsaMaxSize (max across LSA ranks) to support asymmetric sizes.
+  NCCLCHECKGOTO(ncclSpaceAlloc(&devr->bigSpace, devr->bigSize, mem->lsaMaxSize, devr->granularity, &bigOffset), ret, fail_mem);
   mem->bigOffset = bigOffset;
 
   // Map unicast addresses into flat VA space for lsa team.
@@ -631,7 +617,6 @@ static ncclResult_t symMemoryObtain(
   devr->memHead = mem;
 
 leave:
-  mem->refCount += 1;
   *outMem = mem;
   free(globalSegmentInfo);
   return ret;
@@ -641,7 +626,7 @@ fail_mem_space_teams:
     symUnbindTeamMemory(comm, t, mem);
   }
 fail_mem_space:
-  ncclSpaceFree(&devr->bigSpace, bigOffset, size);
+  ncclSpaceFree(&devr->bigSpace, bigOffset, mem->lsaMaxSize);
 fail_mem:
   if (mem != nullptr) {
     free(mem->memHandles);
@@ -654,10 +639,10 @@ fail_mem:
   return ret;
 }
 
-static void symMemoryDropRef(
+static void symMemoryDestroy(
     struct ncclComm* comm, struct ncclDevrMemory* mem
   ) {
-  if (mem != nullptr && 0 == --mem->refCount) {
+  if (mem != nullptr) {
     struct ncclDevrState* devr = &comm->devrState;
     if (devr->ginEnabled && mem->ginSegmentInfos != nullptr) {
       for (int segment = 0; segment < mem->numGinSegments; segment++) {
@@ -681,7 +666,7 @@ static void symMemoryDropRef(
       }
     }
 
-    ncclSpaceFree(&devr->bigSpace, mem->bigOffset, mem->size);
+    ncclSpaceFree(&devr->bigSpace, mem->bigOffset, mem->lsaMaxSize);
     for (int segment = 0; segment < mem->numSegments; segment++) {
       CUCHECKIGNORE(cuMemRelease(mem->memHandles[segment]));
     }
@@ -798,7 +783,7 @@ static ncclResult_t symWindowDestroy(struct ncclComm* comm, struct ncclWindow_vi
   NCCLCHECKGOTO(ncclShadowPoolToHost(&devr->shadows, winDev, &winDevHost), ret, fail);
   winHost = (struct ncclDevrWindow*)winDevHost->winHost;
 
-  symMemoryDropRef(comm, winHost->memory);
+  symMemoryDestroy(comm, winHost->memory);
 
   { struct ncclDevCommWindowTable* tableDev = devr->windowTable;
     while (true) {
@@ -924,7 +909,7 @@ fail_locReg_memHandle_mem_stream_win:
 fail_locReg_memHandle_mem_stream:
   cudaStreamDestroy(stream);
 fail_locReg_memHandle_mem:
-  symMemoryDropRef(comm, mem);
+  symMemoryDestroy(comm, mem);
 fail_locReg_memHandle:
   for (int idx = 0; idx < numSegments; idx++) {
     if (memHandles[idx] != 0x0ULL) { CUCHECKIGNORE(cuMemRelease(memHandles[idx])); }
@@ -1294,7 +1279,7 @@ fail_stream_mem_win:
   cudaStreamSynchronize(stream);
 fail_stream_mem:
   if (memHandle != 0x0) { CUCHECKIGNORE(cuMemRelease(memHandle)); }
-  symMemoryDropRef(comm, mem);
+  symMemoryDestroy(comm, mem);
 fail_stream:
   cudaStreamDestroy(stream);
 fail:

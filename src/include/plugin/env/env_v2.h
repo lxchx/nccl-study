@@ -1,14 +1,14 @@
 /*************************************************************************
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * See LICENSE.txt for more license information
  *************************************************************************/
 
-#ifndef ENV_V1_H_
-#define ENV_V1_H_
+#ifndef ENV_V2_H_
+#define ENV_V2_H_
 
-#include "err.h"
+#include "nccl.h"
 
 typedef struct {
   const char* name;
@@ -18,7 +18,8 @@ typedef struct {
   //  - ncclMinor: NCCL minor version number
   //  - ncclPatch: NCCL patch version number
   //  - suffix: NCCL version suffix string
-  ncclResult_t (*init)(uint8_t ncclMajor, uint8_t ncclMinor, uint8_t ncclPatch, const char* suffix);
+  //  - logFunction: NCCL debug logging function for plugin diagnostics
+  ncclResult_t (*init)(uint8_t ncclMajor, uint8_t ncclMinor, uint8_t ncclPatch, const char* suffix, ncclDebugLogger_t logFunction);
   // Finalize the environment plugin
   ncclResult_t (*finalize)(void);
   // Get environment variable value
@@ -31,6 +32,6 @@ typedef struct {
   //             ``setenv``) is considered undefined behavior since NCCL might access the returned address after the plugin has
   //             reset the variable.
   const char* (*getEnv)(const char* name);
-} ncclEnv_v1_t;
+} ncclEnv_v2_t;
 
 #endif

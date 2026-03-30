@@ -95,6 +95,16 @@ computation and communication, and fine-grained control over collective
 implementation. This folder demonstrates how to implement collectives using
 device-side kernels.
 
+### [Fused Computation & Communication](07_kernel_fusion/)
+
+This section demonstrates fusing computation and communication within GPU kernels
+using NCCL's Device API. Examples include distributed RMSNorm implementations
+that perform three phases (reduction, computation, distribution) in a single
+kernel launch without CPU involvement. Implementations are provided for
+**Load Store Accessible (LSA)**, **Multimem** (SM 9.0+), **GIN**
+(GPU-Initiated Networking), and **hybrid GIN/LSA** for optimal multi-node
+communication.
+
 
 ## Prerequisites
 

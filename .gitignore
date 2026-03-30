@@ -23,3 +23,7 @@ docs/examples/**/allreduce_ub
 docs/examples/**/allreduce_sm
 docs/examples/**/allgather_ce
 docs/examples/**/allreduce_device_api
+docs/examples/**/rmsnorm_lsa
+docs/examples/**/rmsnorm_multimem
+docs/examples/**/rmsnorm_gin
+docs/examples/**/rmsnorm_hybrid

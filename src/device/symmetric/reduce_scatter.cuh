@@ -27,7 +27,7 @@ static __device__ void reduceDeep(
   int const& nRanks = handler.comm.nRanks;
   constexpr size_t tilePack = UnrollPacks*WARP_SIZE;
   constexpr size_t tileSize = tilePack * BytePerPack;
-  size_t tmaSize;
+  size_t tmaSize = 0;
   ncclSymPtr<Pack> inpPacks = (ncclSymPtr<Pack>)input + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
   ncclSymPtr<Pack> outPacks = (ncclSymPtr<Pack>)output + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
   Pack acc0[UnrollPacks];
@@ -40,7 +40,7 @@ static __device__ void reduceDeep(
 
   if NCCL_IF_CONSTEXPR (EnableTma) {
     if (lane == 0) {
-      __mbarrier_init(&tmaSmem->bar, 1);
+      init(&tmaSmem->bar, WARP_SIZE);
     }
   }
 
@@ -48,7 +48,8 @@ static __device__ void reduceDeep(
   if (0 < nIters) {
     if NCCL_IF_CONSTEXPR (EnableTma) {
       if (lane == 0) {
-        cp_async_bulk_global_to_shared(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), &tmaSmem->bar, tileSize);
+        cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
+        tmaSize += tileSize;
       }
     } else {
       #pragma unroll
@@ -62,20 +63,18 @@ static __device__ void reduceDeep(
 
   if (0 < nIters) {
     while (true) {
-      if NCCL_IF_CONSTEXPR (EnableTma) tmaSize = tileSize;
       AccPack acc1[UnrollPacks];
       int r = rank+1;
       if (r == nRanks) r = 0;
       { Pack tmp1[UnrollPacks];
         if NCCL_IF_CONSTEXPR (EnableTma) {
           if (lane == 0) {
-            cp_async_bulk_global_to_shared(tmaSmem->buff[1], inpPacks.peerPtr(world, r), &tmaSmem->bar, tileSize);
+            cuda::device::memcpy_async_tx(tmaSmem->buff[1], inpPacks.peerPtr(world, r), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
             tmaSize += tileSize;
-            __mbarrier_token_t token = barrier_arrive1_tx_relaxed(&tmaSmem->bar, tmaSize);
-            while (!barrier_try_wait_token_relaxed(&tmaSmem->bar, token)) {}
-            tmaSize = 0;
           }
-          __syncwarp();
+          cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tmaSize);
+          tmaSmem->bar.wait(std::move(token));
+          tmaSize = 0;
         } else {
           #pragma unroll
           for (int u=0; u < UnrollPacks; u++) {
@@ -115,7 +114,7 @@ static __device__ void reduceDeep(
             if (partial && ur!=0 && dr+ur == nRanks) break;
             if NCCL_IF_CONSTEXPR (EnableTma) {
               if (lane == 0) {
-                cp_async_bulk_global_to_shared(tmaSmem->buff[ur], inpPacks.peerPtr(world, r), &tmaSmem->bar, tileSize);
+                cuda::device::memcpy_async_tx(tmaSmem->buff[ur], inpPacks.peerPtr(world, r), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
                 tmaSize += tileSize;
               }
             } else {
@@ -128,13 +127,9 @@ static __device__ void reduceDeep(
             if (r == nRanks) r = 0;
           }
           if NCCL_IF_CONSTEXPR (EnableTma) {
-            if (lane == 0) {
-              __mbarrier_token_t token = barrier_arrive1_tx_relaxed(&tmaSmem->bar, tmaSize);
-              while (!barrier_try_wait_token_relaxed(&tmaSmem->bar, token)) {}
-              tmaSize = 0;
-            }
-            // threads wait for peers' data to reach shared memory before starting the reduction
-            __syncwarp();
+            cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tmaSize);
+            tmaSmem->bar.wait(std::move(token));
+            tmaSize = 0;
           }
           #pragma unroll
           for (int ur=0; ur < UnrollPeers-partial; ur++) {
@@ -166,13 +161,13 @@ static __device__ void reduceDeep(
 
       if NCCL_IF_CONSTEXPR (EnableTma) {
         // threads flush data to point of consistency for async proxy
-        fence_proxy_async();
+        ptx::fence_proxy_async(ptx::space_shared);
         __syncwarp();
 
         if (lane == 0) {
-          cp_async_bulk_shared_to_global(outPacks.localPtr(), tmaSmem->buff[0], tileSize);
-          cp_async_bulk_commit_group();
-          cp_async_bulk_wait_all_read();
+          ptx::cp_async_bulk(ptx::space_global, ptx::space_shared, outPacks.localPtr(), tmaSmem->buff[0], tileSize);
+          ptx::cp_async_bulk_commit_group();
+          ptx::cp_async_bulk_wait_group_read(ptx::n32_t<0>());
         }
 
         // threads wait for shared memory to be consumed by async proxy before reusing it
@@ -189,7 +184,8 @@ static __device__ void reduceDeep(
 
       if NCCL_IF_CONSTEXPR (EnableTma) {
         if (lane == 0) {
-          cp_async_bulk_global_to_shared(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), &tmaSmem->bar, tileSize);
+          cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
+          tmaSize += tileSize;
         }
       } else {
         // Load data for next iteration.

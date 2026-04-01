@@ -16,12 +16,15 @@
 #if !defined(NCCL_OS_WINDOWS)
 #include "gin_scratch.h"
 #endif
-#include "tma_ptx.cuh"
+#include <cuda/barrier>
+#include <cuda/ptx>
+
+namespace ptx = cuda::ptx;
 
 template<typename Pack, int UnrollPacks, int UnrollPeers = 1>
 struct tmaSmemStruct {
   alignas(16) Pack buff[UnrollPeers][UnrollPacks*WARP_SIZE];
-  alignas(8) __mbarrier_t bar;
+  cuda::barrier<cuda::thread_scope_block> bar;
 };
 
 #if __CUDA_ARCH__ >= 700
@@ -246,13 +249,13 @@ template<> struct ncclSymkGinAccumType<FuncSumPostDiv, __nv_fp8_e4m3> { using Ty
 template<> struct ncclSymkGinAccumType<FuncSumPostDiv, __nv_fp8_e5m2> { using Type = __half; };
 #endif
 
-static __device__ __forceinline__ void tmaLoadStoreMc(void* dest, void* smem, void* source, size_t size, __mbarrier_t* bar) {
-  cp_async_bulk_global_to_shared(smem, source, bar, size);
-  __mbarrier_token_t token = barrier_arrive1_tx_relaxed(bar, size);
-  while (!barrier_try_wait_token_relaxed(bar, token)) {}
-  multimem_cp_async_bulk_shared_to_global(dest, smem, size);
-  cp_async_bulk_commit_group();
-  cp_async_bulk_wait_all_read();
+static __device__ __forceinline__ void tmaLoadStoreMc(char* dest, char* smem, char* source, size_t size, cuda::barrier<cuda::thread_scope_block>& bar) {
+  cuda::device::memcpy_async_tx((char*)smem, (const char*)source, cuda::aligned_size_t<16>(size), bar);
+  cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(bar, 1, size);
+  bar.wait(std::move(token));
+  ptx::cp_async_bulk(ptx::space_global, ptx::space_shared, dest, smem, size);
+  ptx::cp_async_bulk_commit_group();
+  ptx::cp_async_bulk_wait_group_read(ptx::n32_t<0>());
 }
 
 // TODO: move this into data_ops.cuh
@@ -286,7 +289,7 @@ static __device__ void bcastMultimem(
     constexpr int smemSizePerWarp = ncclTmaShmemScratchWarpSize();
     tmaSmemStruct_t* tmaSmem = reinterpret_cast<tmaSmemStruct_t*>(smemScratch+lw*smemSizePerWarp);
     if NCCL_IF_CONSTEXPR (EnableTma) {
-      if (lane == 0) __mbarrier_init(&tmaSmem->bar, 1);
+      if (lane == 0) init(&tmaSmem->bar, 1);
     }
 
     nSufBytes = nBytes - cursorAfter;
@@ -296,7 +299,7 @@ static __device__ void bcastMultimem(
     #pragma unroll 1
     while (0 < nIters) {
       if NCCL_IF_CONSTEXPR (EnableTma) {
-        if (lane == 0) tmaLoadStoreMc((void*)(outputUptr+cursor), tmaSmem->buff[0], (void*)(inputUptr+cursor), tileSize, &tmaSmem->bar);
+        if (lane == 0) tmaLoadStoreMc((char*)(outputUptr+cursor), (char*)tmaSmem->buff[0], (char*)(inputUptr+cursor), tileSize, tmaSmem->bar);
       } else {
         BytePack<BytePerPack> tmp[UnrollPacks];
         #pragma unroll
@@ -322,7 +325,6 @@ static __device__ void bcastMultimem(
     uintptr_t cursor = i < nPreBytes ? i : nBytes-nSufBytes+(i-nPreBytes);
     BytePack<sizeof(T)> val = *reinterpret_cast<BytePack<sizeof(T)>*>(inputUptr + cursor);
     multimem_st_global(outputUptr + cursor, val);
-
   }
 }
 

@@ -37,7 +37,7 @@ static __device__ void bcastDeep(
   if NCCL_IF_CONSTEXPR (EnableTma) {
     if (lane == 0) {
       // lane0 issues async.cp.bulk commands
-      __mbarrier_init(&tmaSmem->bar, 1);
+      init(&tmaSmem->bar, 1);
     } else {
       // other lanes can skip the loop
       skip = true;
@@ -48,9 +48,9 @@ static __device__ void bcastDeep(
   if (0 < nIters) {
     if NCCL_IF_CONSTEXPR (EnableTma) {
       if (lane == 0) {
-        cp_async_bulk_global_to_shared(tmaSmem->buff[0], inpPacks, &tmaSmem->bar, tileSize);
-        __mbarrier_token_t token = barrier_arrive1_tx_relaxed(&tmaSmem->bar, tileSize);
-        while (!barrier_try_wait_token_relaxed(&tmaSmem->bar, token)) {}
+        cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks, cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
+        cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tileSize);
+        tmaSmem->bar.wait(std::move(token));
       }
     } else {
       #pragma unroll
@@ -77,7 +77,7 @@ static __device__ void bcastDeep(
           for (int ur=0; ur < UnrollPeers-partial; ur++) {
             if (partial && dr == nRanks) break;
             if NCCL_IF_CONSTEXPR (EnableTma) {
-              cp_async_bulk_shared_to_global(outPacks.lsaPtr(r), tmaSmem->buff[0], tileSize);
+              ptx::cp_async_bulk(ptx::space_global, ptx::space_shared, outPacks.lsaPtr(r), tmaSmem->buff[0], tileSize);
             } else {
               #pragma unroll UnrollPacks
               for (int u=0; u < UnrollPacks; u++) {
@@ -88,8 +88,8 @@ static __device__ void bcastDeep(
           }
           if NCCL_IF_CONSTEXPR (EnableTma) {
             if (lane == 0) {
-              cp_async_bulk_commit_group();
-              cp_async_bulk_wait_all_read();
+              ptx::cp_async_bulk_commit_group();
+              ptx::cp_async_bulk_wait_group_read(ptx::n32_t<0>());
             }
           }
         }
@@ -100,9 +100,9 @@ static __device__ void bcastDeep(
       if (nIters <= 0) break;
       if NCCL_IF_CONSTEXPR (EnableTma) {
         if (lane == 0) {
-          cp_async_bulk_global_to_shared(tmaSmem->buff[0], inpPacks, &tmaSmem->bar, tileSize);
-          __mbarrier_token_t token = barrier_arrive1_tx_relaxed(&tmaSmem->bar, tileSize);
-          while (!barrier_try_wait_token_relaxed(&tmaSmem->bar, token)) {}
+          cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks, cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
+          cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tileSize);
+          tmaSmem->bar.wait(std::move(token));
         }
       } else {
         #pragma unroll

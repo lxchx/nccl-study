@@ -165,6 +165,26 @@ static __device__ void bcast(
 
   constexpr int MinWarpPerBlock = 4;
 
+  if NCCL_IF_CONSTEXPR (EnableTma) {
+    if (alignment%256 == 0) {
+      constexpr int BytePerPack = 16, UnrollPacks = 16, UnrollPeers = 2;
+      constexpr int BytePerChunk = MinWarpPerBlock*UnrollPacks*WARP_SIZE*BytePerPack;
+      uint32_t chunks = (nBytes-cursor)/BytePerChunk;
+      chunks -= imodFast32(chunks, nBlocks, nBlocks_rcp32);
+      if (chunks != 0) {
+        uintptr_t cursorAfter = cursor + uintptr_t(chunks)*BytePerChunk;
+        bcastDeep<BytePerPack, UnrollPacks, UnrollPeers, EnableTma>(
+          handler, tn, t, waitNeeded, bar,
+          (ncclSymPtr<char>)input + cursor,
+          (ncclSymPtr<char>)output + cursor,
+          inPlace, chunks*MinWarpPerBlock
+        );
+        cursor = cursorAfter;
+        waitNeeded = false;
+      }
+    }
+  }
+
   if (alignment%16 == 0) {
     constexpr int BytePerPack = 16, UnrollPacks = 4, UnrollPeers = 2;
     constexpr int BytePerChunk = MinWarpPerBlock*UnrollPacks*WARP_SIZE*BytePerPack;

@@ -260,7 +260,7 @@ static __device__ void reduceEnds(
   }
 }
 
-template<typename Red, typename T>
+template<typename Red, typename T, bool EnableTma>
 static __device__ void reduce(
     ncclSymkArgsHandler const& handler, int tn, int t, int nBlocks,
     bool waitNeeded, ncclLsaBarrierSession<ncclCoopCta>& bar,
@@ -281,29 +281,17 @@ static __device__ void reduce(
   constexpr int MinWarpPerBlock = 4;
 
   if (alignment%16 == 0) {
-#if __CUDA_ARCH__ >= 1000 && defined(ENABLE_TMA)
-    constexpr int BytePerPack = 16, UnrollPacks = 8, UnrollPeers = 2;
-#else
-    constexpr int BytePerPack = 16, UnrollPacks = 4, UnrollPeers = 2;
-#endif
+    constexpr int BytePerPack = 16, UnrollPacks = EnableTma ? 8 : 4, UnrollPeers = 2;
     constexpr int BytePerChunk = MinWarpPerBlock*UnrollPacks*WARP_SIZE*BytePerPack;
     uint32_t chunks = (nBytes-cursor)/BytePerChunk;
     chunks -= imodFast32(chunks, nRanks*nBlocks, nRanks_nBlocks_rcp32);
     if (chunks != 0) {
       uintptr_t cursorAfter = cursor + uintptr_t(chunks)*BytePerChunk;
-#if __CUDA_ARCH__ >= 1000 && defined(ENABLE_TMA)
-      reduceDeep<BytePerPack, UnrollPacks, UnrollPeers, T, true>(
+      reduceDeep<BytePerPack, UnrollPacks, UnrollPeers, T, EnableTma>(
         handler, tn, t, waitNeeded, bar, red,
         (ncclSymPtr<char>)input + cursor, (ncclSymPtr<char>)output + cursor,
         chunks*MinWarpPerBlock
       );
-#else
-      reduceDeep<BytePerPack, UnrollPacks, UnrollPeers, T, false>(
-        handler, tn, t, waitNeeded, bar, red,
-        (ncclSymPtr<char>)input + cursor, (ncclSymPtr<char>)output + cursor,
-        chunks*MinWarpPerBlock
-      );
-#endif
       cursor = cursorAfter;
       waitNeeded = false;
     }
@@ -333,8 +321,8 @@ static __device__ void reduce(
   reduceEnds<UnrollPeers>(handler, tn, t, red, input, output, nElts, nPreBytes/sizeof(T), nSufElts);
 }
 
-template<template<typename> typename Red, typename T>
-__device__ __forceinline__ void ncclSymkRun_ReduceScatter_LD(ncclSymkDevWorkArgs const* args) {
+template<template<typename> typename Red, typename T, bool EnableTma>
+__device__ __forceinline__ void ncclSymkRun_ReduceScatter_LD_impl(ncclSymkDevWorkArgs const* args) {
   ncclSymkArgsHandler handler{args};
   ncclLsaBarrierSession<ncclCoopCta> bar{
     ncclCoopCta(), handler.comm, ncclTeamTagLsa(), blockIdx.x
@@ -354,13 +342,23 @@ __device__ __forceinline__ void ncclSymkRun_ReduceScatter_LD(ncclSymkDevWorkArgs
                           threadIdx.x/WARP_SIZE, blockDim.x/WARP_SIZE);
         int tn = nBlocks*blockDim.x;
 
-        reduce(handler, tn, t, nBlocks, waitNeeded, bar, red, input + rank*nAllElts, output, nElts);
+        reduce<decltype(red), T, EnableTma>(handler, tn, t, nBlocks, waitNeeded, bar, red, input + rank*nAllElts, output, nElts);
 
         waitNeeded = false;
       }
     );
 
   bar.sync(ncclCoopCta(), cuda::memory_order_relaxed);
+}
+
+template<template<typename> typename Red, typename T>
+__device__ __forceinline__ void ncclSymkRun_ReduceScatter_LD(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_ReduceScatter_LD_impl<Red, T, /*EnableTma=*/false>(args);
+}
+
+template<template<typename> typename Red, typename T>
+__device__ __forceinline__ void ncclSymkRun_ReduceScatter_TmaLD(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_ReduceScatter_LD_impl<Red, T, /*EnableTma=*/true>(args);
 }
 
 template<typename Red, typename T>

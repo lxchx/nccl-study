@@ -208,7 +208,8 @@ static __device__ void bcast(
   bcastEnds<UnrollPeers>(handler, tn, t, input, output, inPlace, nElts, nPreBytes/sizeof(T), nSufElts);
 }
 
-__device__ __forceinline__ void ncclSymkRun_AllGather_ST(ncclSymkDevWorkArgs const* args) {
+template<bool EnableTma>
+__device__ __forceinline__ void ncclSymkRun_AllGather_ST_impl(ncclSymkDevWorkArgs const* args) {
   ncclSymkArgsHandler handler{args};
   ncclLsaBarrierSession<ncclCoopCta> bar{
     ncclCoopCta(), handler.comm, ncclTeamTagLsa(), blockIdx.x
@@ -226,11 +227,7 @@ __device__ __forceinline__ void ncclSymkRun_AllGather_ST(ncclSymkDevWorkArgs con
                            block, nBlocks,
                            threadIdx.x/WARP_SIZE, blockDim.x/WARP_SIZE);
         int btn = nBlocks*blockDim.x;
-#if __CUDA_ARCH__ >= 1000 && defined(ENABLE_TMA)
-        bcast<char, true>(handler, btn, bt, nBlocks, waitNeeded, bar, input, output + rank*nAllElts, nElts);
-#else
-        bcast<char, false>(handler, btn, bt, nBlocks, waitNeeded, bar, input, output + rank*nAllElts, nElts);
-#endif
+        bcast<char, EnableTma>(handler, btn, bt, nBlocks, waitNeeded, bar, input, output + rank*nAllElts, nElts);
         waitNeeded = false;
       }
     );
@@ -238,7 +235,16 @@ __device__ __forceinline__ void ncclSymkRun_AllGather_ST(ncclSymkDevWorkArgs con
   bar.sync(ncclCoopCta(), cuda::memory_order_release);
 }
 
-__device__ __forceinline__ void ncclSymkRun_AllGather_STMC(ncclSymkDevWorkArgs const* args) {
+__device__ __forceinline__ void ncclSymkRun_AllGather_ST(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_AllGather_ST_impl</*EnableTma=*/false>(args);
+}
+
+__device__ __forceinline__ void ncclSymkRun_AllGather_TmaST(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_AllGather_ST_impl</*EnableTma=*/true>(args);
+}
+
+template<bool EnableTma>
+__device__ __forceinline__ void ncclSymkRun_AllGather_STMC_impl(ncclSymkDevWorkArgs const* args) {
   ncclSymkArgsHandler handler{args};
   ncclLsaBarrierSession<ncclCoopCta> bar(
     ncclCoopCta(), handler.comm, ncclTeamTagLsa(), blockIdx.x, /*multimem=*/true
@@ -255,15 +261,19 @@ __device__ __forceinline__ void ncclSymkRun_AllGather_STMC(ncclSymkDevWorkArgs c
                           block, nBlocks,
                           threadIdx.x/WARP_SIZE, blockDim.x/WARP_SIZE);
         int tn = nBlocks*blockDim.x;
-#if __CUDA_ARCH__ >= 1000 && defined(ENABLE_TMA)
-        bcastMultimem<char, true>(handler, tn, t, input, output + rank*nAllElts, nElts);
-#else
-        bcastMultimem<char, false>(handler, tn, t, input, output + rank*nAllElts, nElts);
-#endif
+        bcastMultimem<char, EnableTma>(handler, tn, t, input, output + rank*nAllElts, nElts);
       }
     );
 
   bar.sync(ncclCoopCta(), cuda::memory_order_release);
+}
+
+__device__ __forceinline__ void ncclSymkRun_AllGather_STMC(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_AllGather_STMC_impl</*EnableTma=*/false>(args);
+}
+
+__device__ __forceinline__ void ncclSymkRun_AllGather_TmaSTMC(ncclSymkDevWorkArgs const* args) {
+  ncclSymkRun_AllGather_STMC_impl</*EnableTma=*/true>(args);
 }
 
 template<typename EltType>

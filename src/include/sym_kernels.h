@@ -33,16 +33,20 @@ constexpr __host__ __device__ int ncclSymkLLMaxSlots(int eltSize = ncclSymkLLMax
 enum ncclSymkKernelId {
   ncclSymkKernelId_AllReduce_AGxLL_R,
   ncclSymkKernelId_AllReduce_AGxLLMC_R,
+  ncclSymkKernelId_AllReduce_RSxTmaLD_AGxTmaST,
   ncclSymkKernelId_AllReduce_RSxLD_AGxST,
   ncclSymkKernelId_AllReduce_RSxLDMC_AGxSTMC,
 
   ncclSymkKernelId_AllGather_LL,
   ncclSymkKernelId_AllGather_LLMC,
+  ncclSymkKernelId_AllGather_TmaST,
   ncclSymkKernelId_AllGather_ST,
+  ncclSymkKernelId_AllGather_TmaSTMC,
   ncclSymkKernelId_AllGather_STMC,
   ncclSymkKernelId_AllGather_RailRing_LsaSTMC,
 
   ncclSymkKernelId_ReduceScatter_LL,
+  ncclSymkKernelId_ReduceScatter_TmaLD,
   ncclSymkKernelId_ReduceScatter_LD,
   ncclSymkKernelId_ReduceScatter_LDMC,
   ncclSymkKernelId_ReduceScatter_RailA2A_LsaLD,

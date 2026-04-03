@@ -309,9 +309,7 @@ struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_PROXY> {
     nccl::gin::proxy::postGfd<Coop>(coop, proxyCtx, &gfd, /*peer*/ctx.rank);
 
     // wait for the flush operation to be completed
-    for (int pe = coop.thread_rank(); pe < ctx.nRanks; pe += coop.size()) {
-      nccl::gin::proxy::flush(proxyCtx, pe, ord, abortFlag);
-    }
+    nccl::gin::proxy::flush(proxyCtx, ctx.rank, ord, abortFlag);
   }
 };
 

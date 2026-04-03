@@ -56,8 +56,8 @@ ncclResult_t ncclMnnvlCheck(struct ncclComm* comm) {
     }
   }
 
-  // No MNNVL clique found
-  if (comm->clique.size <= 1) return ncclSuccess;
+  // ncclCommSplit: clique.size may be 1 while nvlDomainSize > 1; still enable MNNVL.
+  if (comm->clique.size <= 1 && comm->nvlDomainSize <= 1) return ncclSuccess;
 
   // Check that FABRIC handles can be exported & imported by IMEX
   {

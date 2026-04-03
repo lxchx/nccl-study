@@ -150,7 +150,7 @@ ncclResult_t ncclMakeSymmetricTaskList(struct ncclComm* comm, struct ncclTaskCol
       // - If the user forced a symmetric kernel via NCCL_SYM_KERNEL or requested preference for using
       //   symmetric kernels even without symmetric buffers via NCCL_SYM_NOWIN_ENABLE, we respect that.
       // - Otherwise, we query the legacy cost model and if it selects a non-LL proto, we pick that.
-      if (headTask->winRegType == ncclSymSendRegRecvReg) {
+      if (headTask->winRegType == ncclSymSendRegRecvReg || headTask->algorithm == NCCL_ALGO_UNDEF) {
         needFallback = false;
       } else if (isLLKernel) {
         needFallback = isOneThreadMultiGpus && headTask->winRegType == ncclSymSendNonregRecvNonreg;

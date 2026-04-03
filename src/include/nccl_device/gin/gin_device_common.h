@@ -89,6 +89,17 @@ struct ncclGinSignalDescriptor {
 #if NCCL_CHECK_CUDACC
 
 template <ncclNetDeviceType backend>
+struct ncclGinApi_Wait {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx, ncclGinRequest_t& outRequest, bool hasDescriptor,
+                                      ncclGinDescriptorSmem* descriptor, cuda::memory_order ord, uint32_t* abortFlag);
+};
+
+template <ncclNetDeviceType backend>
+struct ncclGinApi_FlushAsync {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx, uint32_t peer, ncclGinRequest_t* outRequest, uint32_t optFlags);
+};
+
+template <ncclNetDeviceType backend>
 struct ncclGinApi_Get {
   template <typename Coop>
   NCCL_DEVICE_INLINE static void call(ncclGinCtx, Coop coop, int peer, ncclGinWindow_t remoteWin, size_t remoteOff,

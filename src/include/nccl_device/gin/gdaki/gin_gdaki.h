@@ -25,6 +25,13 @@
 #include "gin_gdaki_device_host_common.h"
 #include "doca_gpunetio/doca_gpunetio_device.h"
 
+struct ncclGinGdakiRequest {
+  int peer;
+  doca_gpu_dev_verbs_ticket_t docaTicket;
+};
+static_assert(sizeof(ncclGinGdakiRequest) <= sizeof(ncclGinRequest_t),
+              "ncclGinGdakiRequest must fit in ncclGinRequest_t");
+
 #ifdef NCCL_DEVICE_GIN_GDAKI_ENABLE_DEBUG
 #include <stdio.h>
 #endif
@@ -252,6 +259,49 @@ struct ncclGinApi_Get<NCCL_NET_DEVICE_GIN_GDAKI> {
           qp, raddr, laddr, bytes, uninitialized_daddr, &unused_out_ticket, codeOpt);
     }
     coop.sync();
+  }
+};
+
+template <>
+struct ncclGinApi_FlushAsync<NCCL_NET_DEVICE_GIN_GDAKI> {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest, uint32_t optFlags) {
+    using nccl::utility::loadConst;
+    ncclGinGdakiRequest* req = reinterpret_cast<ncclGinGdakiRequest*>(outRequest);
+    req->peer = peer;
+    ncclGinGdakiGPUContext* gdaki = &((struct ncclGinGdakiGPUContext*)ctx.handle)[ctx.contextId];
+    doca_gpu_dev_verbs_qp* qp = loadConst(&gdaki->gdqp) + peer;
+    doca_gpu_dev_verbs_addr sink_addr;
+    sink_addr.addr = 0;
+    sink_addr.key = loadConst(&gdaki->sink_buffer_lkey);
+    uint32_t codeOpt = nccl::gin::gdaki::docaOptFlagsFromGinOptFlags(optFlags);
+    doca_gpu_dev_verbs_get<
+        DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+        DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO,
+        DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD,
+        DOCA_GPUNETIO_VERBS_MCST_ENABLED,
+        DOCA_GPUNETIO_VERBS_BLOCKING_MODE_DISABLED>(
+        qp, sink_addr, sink_addr, size_t(0), sink_addr, &req->docaTicket, codeOpt);
+  }
+};
+
+template <>
+struct ncclGinApi_Wait<NCCL_NET_DEVICE_GIN_GDAKI> {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, ncclGinRequest_t& request, bool hasDescriptor,
+                                      ncclGinDescriptorSmem* descriptor, cuda::memory_order ord, uint32_t* abortFlag) {
+    using nccl::utility::loadConst;
+    using nccl::utility::testAbort;
+    ncclGinGdakiRequest& req = reinterpret_cast<ncclGinGdakiRequest&>(request);
+    ncclGinGdakiGPUContext* gdaki = &((struct ncclGinGdakiGPUContext*)ctx.handle)[ctx.contextId];
+    doca_gpu_dev_verbs_qp* qp = loadConst(&gdaki->gdqp) + req.peer;
+    if (abortFlag) {
+      uint32_t steps = 0;
+      int status = EBUSY;
+      while (status != 0 && !testAbort(abortFlag, steps)) {
+        status = doca_gpu_dev_verbs_poll_one_cq_at(&qp->cq_sq, req.docaTicket);
+      }
+    } else {
+      doca_gpu_dev_verbs_wait(qp, req.docaTicket);
+    }
   }
 };
 

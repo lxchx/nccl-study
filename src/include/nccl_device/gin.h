@@ -189,10 +189,17 @@ struct ncclGin_BackendMask {
     ncclDevComm const&, int contextIndex,
     ncclGinResourceSharingMode resourceSharingMode_ = NCCL_GIN_RESOURCE_SHARING_GPU);
 
-  template<
-    typename Coop = ncclCoopThread,
-    typename DescriptorSmem = ncclGin_None
-  >
+  template <typename Coop = ncclCoopThread>
+  NCCL_DEVICE_INLINE void flushAsync(ncclTeam team, uint32_t peer, ncclGinRequest_t* outRequest,
+                                     Coop coop = ncclCoopThread{}, uint32_t optFlags = ncclGinOptFlagsDefault) const;
+
+  template <typename Coop = ncclCoopThread, typename DescriptorSmem = ncclGin_None>
+  NCCL_DEVICE_INLINE void wait(ncclGinRequest_t& outRequest,
+                               Coop coop = ncclCoopThread{}, DescriptorSmem descriptor = ncclGin_None{},
+                               cuda::memory_order ord = cuda::memory_order_acquire) const;
+
+  template<typename Coop = ncclCoopThread,
+           typename DescriptorSmem = ncclGin_None>
   NCCL_DEVICE_INLINE void get(
     ncclTeam, int peer,
     ncclWindow_t remoteWnd, size_t remoteOffset,

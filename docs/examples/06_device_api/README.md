@@ -76,7 +76,7 @@ simpleAllReduceKernel<<<NCCL_DEVICE_CTA_COUNT, NCCL_DEVICE_THREADS_PER_CTA, 0, s
 
 ### Checking for Device API and GIN Support
 
-To check for the required Device API and GIN support, the communicator properties are queried via `ncclCommQueryProperties`:
+Use `ncclCommQueryProperties` to validate the communicator before device-side work. The checks below cover everything these examples rely on: every sample needs Device API support; the GIN AlltoAll examples (`02`, `03`) need GIN; the pure LSA AllReduce (`01`) needs a single LSA team and does not use the GIN check. Each `main.cu` keeps the subset that applies to that program.
 
 ```cpp
 ncclCommProperties_t props = NCCL_COMM_PROPERTIES_INITIALIZER;
@@ -119,7 +119,7 @@ cd 01_allreduce_lsa && make
 
 # Build and run the Pure GIN AlltoAll example
 cd 02_alltoall_gin && make
-./allreduce_gin
+./alltoall_gin
 
 # Build and run the Hybrid AlltoAll example
 cd 03_alltoall_hybrid && make

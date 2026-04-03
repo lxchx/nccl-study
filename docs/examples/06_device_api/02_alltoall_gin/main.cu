@@ -59,8 +59,8 @@
  * Kernel notes:
  * - signalIndex is blockIdx.x; all puts targeting a given rank use the same
  *   signal index, so only the CTA receivingCta must waitSignal for nRanks.
- * - After flush, a release ncclGinBarrierSession::sync pairs with the acquire
- *   at entry so ranks do not exit the kernel before the collective completes.
+ * - Before exit, flush() all outgoing puts: it does not guarantee remote
+ *   completion, but makes the local send buffer safe to reuse.
  */
 
 // Grid width (CTAs). Must match reqs.worldGinBarrierCount and reqs.ginSignalCount.

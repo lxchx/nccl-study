@@ -46,7 +46,7 @@ mpirun -np <num_processes> ./alltoall_gin
 ## Code Walk-through
 
 ### Device Communicator Creation (Host-side)
-The `ncclDevComm` is the core component enabling GPU kernels to perform network communication directly. For pure GIN communication, we configure the device communicator with GIN-specific resources. The `ncclDevCommRequirements` specifies GIN barriers for network synchronization and signals for completion detection. Unlike LSA-based examples, we don't need LSA barriers since all communication goes through the network.
+The `ncclDevComm` is the core component enabling GPU kernels to perform network communication directly. For pure GIN communication, we configure the device communicator with GIN-specific resources. The `ncclDevCommRequirements` sets `worldGinBarrierCount` for `ncclGinBarrierSession` (network-side barriers) and `ginSignalCount` for completion. Unlike LSA-based examples, there is no `lsaBarrierCount` or `ncclLsaBarrierSession`. Cross-rank ordering uses GIN barriers and signals instead.
 
 ```cpp
 ncclDevComm devComm;
@@ -75,11 +75,19 @@ NCCLCHECK(ncclCommWindowRegister(comm, d_recvbuff, size_bytes, &recv_win, NCCL_W
 ```
 
 ### GIN Barriers (Device-side)
-GIN barriers enable cross-node synchronization from device code over the network. Each thread block uses `blockIdx.x` to select its dedicated barrier, allowing blocks to progress independently while coordinating with corresponding blocks on other nodes. An **acquire** sync at kernel entry ensures all ranks are ready before the AlltoAll exchange; a **release** sync after `flush` (see below) pairs with that acquire so ranks do not leave the kernel until the collective is complete.
+GIN barriers enable cross-node synchronization from device code over the network. Each thread block uses `blockIdx.x` to select its dedicated barrier, allowing blocks to progress independently while coordinating with corresponding blocks on other nodes. The kernel constructs `ncclGinBarrierSession` with `ncclTeamTagWorld()` and calls `bar.sync` **before** the `put` loop so all ranks are ready to start the exchange.
 
 ```cpp
+  int ginContext = 0;
+  unsigned int signalIndex = blockIdx.x;
+  ncclGin gin { devComm, ginContext };
+  uint64_t signalValue = gin.readSignal(signalIndex);
+
   ncclGinBarrierSession<ncclCoopCta> bar { ncclCoopCta(), gin, ncclTeamTagWorld(), blockIdx.x };
   bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  int nthreads = blockDim.x * gridDim.x;
 ```
 
 ### GIN Put Operations (Device-side)
@@ -95,8 +103,10 @@ GIN provides one-sided put operations for direct remote memory writes over the n
   }
 ```
 
-### Signal-based Completion (Device-side)
-GIN uses signals for asynchronous completion detection of network operations. The kernel waits for the signal value to reach the expected count (initial value + number of ranks), indicating all put operations have completed. The `gin.flush()` ensures all pending operations are committed. A final `bar.sync` with **release** ordering runs after `flush` so every rank completes the GIN work before any rank proceeds past the kernel—pairing with the **acquire** at entry and avoiding races where a successor kernel might observe incomplete data.
+### Signal-based Completion and `flush` (Device-side)
+GIN uses signals for asynchronous completion detection of network operations. The kernel waits for the signal value to reach the expected count (initial value + number of ranks), indicating all **incoming** `put` operations targeting this rank have been accounted for on the signal.
+
+Before the kernel returns, call **`gin.flush()`** so every previously issued outgoing **`gin.put()`** is flushed. **`flush()`** does **not** by itself guarantee that remote peers have finished consuming data on their side, but it **does** ensure this rank’s **local input buffer** (the memory used as the source of the puts) is **safe to reuse**.
 
 ```cpp
   // Wait only on the CTA whose blockIdx.x (signalIndex) accumulates all puts to this rank.
@@ -110,7 +120,7 @@ GIN uses signals for asynchronous completion detection of network operations. Th
 
 ### Receiving CTA (Device-side)
 
-`signalIndex` is `blockIdx.x`, so each `gin.put` increments the destination rank's signal for that sender CTA index. Only the CTA with `blockIdx.x == receivingCta` calls `waitSignal`; `receivingCta = (devComm.rank % nthreads) / blockDim.x` picks one waiting CTA per destination rank. The wait uses `signalValue + devComm.nRanks` because every peer sends one GIN put to this rank (pure GIN: all peers are remote).
+`signalIndex` is `blockIdx.x`, so each `gin.put` increments the destination rank's signal for that sender CTA index. Only the CTA with `blockIdx.x == receivingCta` calls `waitSignal`; `receivingCta = (devComm.rank % nthreads) / blockDim.x` picks one waiting CTA per destination rank. The wait uses `signalValue + devComm.nRanks` because every rank, including self, sends one GIN put to this rank.
 
 ## Expected Output
 
@@ -141,7 +151,7 @@ Pure GIN AlltoAll result: PASSED
 
 - **Network overhead**: All communication goes through the network stack
 - **Signal-based completion**: Enables asynchronous operation patterns
-- **Barrier synchronization**: Ensures proper ordering of network operations
+- **Entry barrier** (`ncclGinBarrierSession` before puts): aligns ranks before the exchange
 - **Multiple GIN contexts**: Can improve parallel communication performance
 
 ## Common Issues and Solutions

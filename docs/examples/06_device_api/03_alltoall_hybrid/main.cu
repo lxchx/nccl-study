@@ -50,8 +50,10 @@
  * Implementation notes (this example):
  * - GIN for peers outside the LSA team; LSA stores for peers on the same node.
  * - ginConnectionType NCCL_GIN_CONNECTION_FULL: full GIN connectivity (each rank to all peers).
- * - Uses ncclBarrierSession (world team + GIN), not ncclGinBarrierSession, so
- *   reqs sets barrierCount, not worldGinBarrierCount.
+ * - Uses ncclBarrierSession (LSA + GIN hybrid world barrier), not
+ *   ncclGinBarrierSession, so reqs sets barrierCount, not worldGinBarrierCount.
+ * - Hybrid does not set lsaBarrierCount separately; barrierCount governs both
+ *   LSA and GIN sides of ncclBarrierSession.
  *
  * Kernel flow:
  * - Acquire barrier before remote puts and local LSA copies.
@@ -219,7 +221,8 @@ void* hybridAlltoAll(int my_rank, int total_ranks, int local_device, int devices
   // Create device communicator with both LSA and GIN support
   ncclDevComm devComm;
   ncclDevCommRequirements reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
-  reqs.barrierCount = NCCL_DEVICE_CTA_COUNT;       // ncclBarrierSession (world + GIN)
+  // barrierCount governs LSA + GIN hybrid barriers
+  reqs.barrierCount = NCCL_DEVICE_CTA_COUNT;
   reqs.ginSignalCount = NCCL_DEVICE_CTA_COUNT;       // one signal index per CTA
   reqs.ginConnectionType = NCCL_GIN_CONNECTION_FULL;  // full GIN connectivity: each rank to all peers
   NCCLCHECK(ncclDevCommCreate(comm, &reqs, &devComm));

@@ -21,7 +21,9 @@ This example showcases **hybrid communication** that intelligently selects the o
 1. **Creates hybrid device communicators** using `ncclDevCommCreate` with both LSA and GIN support for optimal peer communication
 2. **Registers symmetric memory windows** with `ncclCommWindowRegister` for both LSA direct access and GIN network operations
 3. **Launches GPU kernel** that performs AlltoAll operations using LSA for local peers and GIN for remote peers
-4. **Demonstrates hybrid synchronization** coordinating both LSA barriers and GIN signals for correctness
+4. **Demonstrates hybrid synchronization** using `ncclBarrierSession`, which is **LSA + GIN** (hybrid world barrier), plus direct LSA loads/stores (no separate `ncclLsaBarrierSession` in this kernel):
+   - **LSA team ranks:** `bar.sync` uses `cuda::memory_order_acquire` / `cuda::memory_order_release` so peers in the LSA team see each other’s writes in order.
+   - **Remote peers:** `gin.put`, then `waitSignal`, then `gin.flush`. `gin.flush` finishes outstanding GIN work so **local buffers** can be **reused** in a later phase if needed.
 
 ## Building and Running
 
@@ -45,12 +47,12 @@ mpirun -np <num_processes> ./alltoall_hybrid
 ## Code Walk-through
 
 ### Device Communicator Creation (Host-side)
-The `ncclDevComm` is the core component enabling GPU kernels to perform both local and remote communication. For hybrid communication, we configure the device communicator with both LSA and GIN resources. The `ncclDevCommRequirements` specifies LSA barriers for local synchronization, GIN barriers for network synchronization, and GIN signals for completion detection. This dual setup enables optimal communication for each peer type.
+The `ncclDevComm` is the core component enabling GPU kernels to perform both local and remote communication. For hybrid communication, we configure the device communicator with both LSA and GIN resources. **`ncclBarrierSession` is LSA + GIN**: one hybrid barrier that coordinates both paths. **`barrierCount`** is the single field that **governs** that session. **`lsaBarrierCount`** should not be set separately. **`ginSignalCount`** covers GIN completion signals.
 
 ```cpp
 ncclDevComm devComm;
 ncclDevCommRequirements reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
-// world-team barrier slots (ncclBarrierSession with GIN)
+// barrierCount governs LSA + GIN hybrid barriers
 reqs.barrierCount = NCCL_DEVICE_CTA_COUNT;
 // GIN signals provide completion notifications for asynchronous network operations
 reqs.ginSignalCount = NCCL_DEVICE_CTA_COUNT;
@@ -74,7 +76,7 @@ NCCLCHECK(ncclCommWindowRegister(comm, d_recvbuff, size_bytes, &recv_win, NCCL_W
 ```
 
 ### Hybrid Barriers (Device-side)
-Hybrid barriers coordinate both local LSA operations and remote GIN operations. The barrier session uses the world team and GIN context to ensure synchronization across all ranks, regardless of their communication method. This unified barrier approach ensures all peers reach the same synchronization point before proceeding with data exchange.
+`ncclBarrierSession` is **LSA + GIN**: it coordinates mixed GIN puts and LSA stores without a separate `ncclLsaBarrierSession`. **`bar.sync`** carries acquire/release for **LSA** peers; **`gin.put`**, **`waitSignal`**, and **`gin.flush`** handle **remote** peers (`flush` so local buffers can be reused when needed).
 
 ```cpp
 // Hybrid barriers coordinate both LSA and GIN operations across all ranks
@@ -136,37 +138,7 @@ const int lsaSize = lsa.nRanks;              // Number of local peers
 
 ### Receiving CTA (Device-side)
 
-`signalIndex` is `blockIdx.x`, so each `gin.put` increments the destination rank's signal for that sender CTA index. Only the CTA with `blockIdx.x == receivingCta` calls `waitSignal`; `receivingCta = (world.rank % nthreads) / blockDim.x` picks one waiting CTA per destination rank (same idea as the pure GIN AlltoAll example). The wait uses `signalValue + numRemotePeers` because only **remote** peers contribute GIN puts toward this rank; LSA peers do not.
-
-## Building and Running
-
-### Build
-```bash
-make
-```
-
-### Run with pthread mode (default)
-```bash
-# Run with all available GPUs
-./alltoall_hybrid
-
-# Run with specific number of GPUs
-NTHREADS=4 ./alltoall_hybrid
-```
-
-### Run with MPI mode
-```bash
-# Build with MPI support
-make MPI=1
-
-# Run with MPI across multiple nodes
-mpirun -np 4 --hostfile hosts ./alltoall_hybrid
-```
-
-### Test
-```bash
-make test
-```
+`signalIndex` is `blockIdx.x`, so each `gin.put` increments the destination rank's signal for that sender CTA index. Only the CTA with `blockIdx.x == receivingCta` calls `waitSignal`; `receivingCta = (world.rank % nthreads) / blockDim.x` picks one waiting CTA per destination rank (same idea as the pure GIN AlltoAll example). The wait uses `signalValue + numRemotePeers` because only **remote** peers perform GIN puts toward this rank; LSA peers are not part of that GIN put count.
 
 ## Expected Output
 

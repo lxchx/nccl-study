@@ -1119,11 +1119,19 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
             // GDRCOPY support
             if (resources->gdcFlush) {
 #if defined (__x86_64__)
-              // Force a PCI-E read from GPU memory
+              // Order CQE-poll loads ahead of the flush load: prevents the WC
+              // read from being speculatively dispatched onto PCIe before the
+              // NIC's posted writes have entered the fabric.
+              asm volatile ("mfence" ::: "memory");
+              // Force a PCIe read from GPU memory: stalls the CPU until all prior
+              // PCIe posted writes (including NIC DMA) to this endpoint are committed.
               asm volatile ("mov (%0), %%eax" :: "l"(resources->gdcFlush) : "%eax", "memory");
 #else
-              WARN("NET: GDR Flush only supported on x86_64");
-              return ncclInternalError;
+              // Portable equivalent. seq_cst fence keeps the load inside
+              // ncclGdrCudaRead from being reordered ahead of the CQE poll.
+              std::atomic_thread_fence(std::memory_order_seq_cst);
+              uint64_t dummy;
+              NCCLCHECK(ncclGdrCudaRead(resources->gdrDesc, &dummy, resources->gdcFlush, sizeof(dummy)));
 #endif
             } else {
               NCCLCHECK(collNetRecvFlush(proxyState, resources, args, sub, groupStart, totalSize, recvBeg, &sub->requests[buffSlot]));

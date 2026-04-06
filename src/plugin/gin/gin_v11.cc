@@ -43,6 +43,13 @@ static ncclResult_t ncclGin_iput(void* ginCtx, int context, uint64_t srcOff, voi
   return ncclGin_v11->iput(ginCtx, srcOff, srcMhandle, size, dstOff, dstMhandle, rank, request);
 }
 
+// iflush was introduced to ensure data visibility after a get operation. ncclGin_v11 does not
+// support get so this function is a no-op.
+static ncclResult_t ncclGin_iflush(void* ginCtx, int context, void* mhandle, uint32_t rank, void** request) {
+  *request = NULL;
+  return ncclSuccess;
+}
+
 static ncclResult_t ncclGin_iputSignal(void* ginCtx, int context, uint64_t srcOff, void* srcMhandle,
     size_t size, uint64_t dstOff, void* dstMhandle, uint32_t rank, uint64_t signalOff, void *signalMhandle,
     uint64_t signalValue, uint32_t signalOp, void** request) {
@@ -101,7 +108,7 @@ ncclGin_t* getNcclGin_v11(void* lib) {
     ncclGin.iput = ncclGin_iput;
     ncclGin.iputSignal = ncclGin_iputSignal;
     ncclGin.iget = NULL;
-    ncclGin.iflush = NULL;
+    ncclGin.iflush = ncclGin_iflush;
     ncclGin.test = ncclGin_v11->test;
     ncclGin.ginProgress = ncclGin_v11->ginProgress;
     ncclGin.queryLastError = ncclGin_v11->queryLastError;

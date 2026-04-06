@@ -263,6 +263,9 @@ static ncclResult_t proxyGinProcessGfd(struct ginProxyCtx *ctx,
       return ncclInvalidUsage;
     }
     NCCLCHECK(ginBackend->iflush(ctx->ginCtx, hostGpuCtx->contextId, ctx->signalsGinHandle, targetRank,&state->request));
+    if (state->request == NULL) {
+      state->done = 1;
+    }
     return ncclSuccess;
   }
 

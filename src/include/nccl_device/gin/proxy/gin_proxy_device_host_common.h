@@ -147,6 +147,8 @@ typedef struct {
 
   uint64_t *counters;
   uint64_t *signals;
+  uint64_t *signalOffsets;
+  uint64_t *counterOffsets;
 } ncclGinProxyGpuCtx_t;
 
 #endif

@@ -67,6 +67,8 @@ struct ginProxyCtx {
   void *signalsMhandle;
   void *signalsGinHandle;
   uint64_t *signalsDev;
+  uint64_t *signalOffsetsDev;
+  uint64_t *counterOffsetsDev;
   bool hasError;
   int nContexts;
   int nCountersPerContext;
@@ -485,6 +487,14 @@ static ncclResult_t ncclGinProxyCreateContext(void* collComm, ncclGinConfig_t* c
   }
   proxyCtx->nSignalsPerContext = config->nSignals;
 
+  // Allocate offset arrays for reset-without-zeroing (GPU memory, zeroed)
+  if (config->nSignals) {
+    NCCLCHECK(ncclCudaCalloc(&proxyCtx->signalOffsetsDev, config->nSignals * nContexts, NULL));
+  }
+  if (config->nCounters) {
+    NCCLCHECK(ncclCudaCalloc(&proxyCtx->counterOffsetsDev, config->nCounters * nContexts, NULL));
+  }
+
   NCCLCHECK(ncclCalloc(&proxyCtx->hostGpuCtx, nContexts));
   NCCLCHECK(ncclCalloc(&devGpuCtxArray_h, nContexts));
   for (int contextId = 0; contextId < nContexts; contextId++) {
@@ -506,6 +516,8 @@ static ncclResult_t ncclGinProxyCreateContext(void* collComm, ncclGinConfig_t* c
     devGpuCtx_h->queueSize = hostGpuCtx->queueSize;
     devGpuCtx_h->counters = proxyCtx->countersDev + contextId * config->nCounters;
     devGpuCtx_h->signals = proxyCtx->signalsDev + contextId * config->nSignals;
+    devGpuCtx_h->signalOffsets = proxyCtx->signalOffsetsDev + contextId * config->nSignals;
+    devGpuCtx_h->counterOffsets = proxyCtx->counterOffsetsDev + contextId * config->nCounters;
     devGpuCtx_h->pis = hostGpuCtx->pis;
 
     // Allocate the GFD queues, CIs, counters, signals and test/wait variables on the either the CPU

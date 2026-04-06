@@ -148,14 +148,19 @@ struct ncclGinApi_PutValue {
                                       uint32_t optFlags = ncclGinOptFlagsDefault);
 };
 
+struct ncclGinOffsetPtr {
+  uint64_t* ptr;
+  uint64_t offset;
+};
+
 template <ncclNetDeviceType backend>
 struct ncclGinApi_GetSignalPtr {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx, int peer, ncclGinSignal_t signalId);
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx, int peer, ncclGinSignal_t signalId);
 };
 
 template <ncclNetDeviceType backend>
 struct ncclGinApi_GetCounterPtr {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx, int peer, ncclGinCounter_t counterId);
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx, int peer, ncclGinCounter_t counterId);
 };
 
 template <ncclNetDeviceType backend>

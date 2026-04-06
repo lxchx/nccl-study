@@ -303,10 +303,10 @@ struct ncclGinApi_Wait<NCCL_NET_DEVICE_GIN_PROXY> {
 
 template <>
 struct ncclGinApi_GetCounterPtr<NCCL_NET_DEVICE_GIN_PROXY> {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
-    uint64_t* counter = nccl::utility::loadConst(&proxyCtx->counters) + counterId;
-    return counter;
+    return {nccl::utility::loadConst(&proxyCtx->counters) + counterId,
+            nccl::utility::loadConst(&proxyCtx->counterOffsets)[counterId]};
   }
 };
 
@@ -315,16 +315,17 @@ struct ncclGinApi_ResetCounter<NCCL_NET_DEVICE_GIN_PROXY> {
   NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
     uint64_t* counter = nccl::utility::loadConst(&proxyCtx->counters) + counterId;
-    *counter = 0;
+    uint64_t* offsetPtr = nccl::utility::loadConst(&proxyCtx->counterOffsets) + counterId;
+    *offsetPtr = cuda::atomic_ref<uint64_t>{*counter}.load(cuda::memory_order_relaxed);
   }
 };
 
 template <>
 struct ncclGinApi_GetSignalPtr<NCCL_NET_DEVICE_GIN_PROXY> {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx ctx, ncclGinSignal_t signalId) {
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx ctx, ncclGinSignal_t signalId) {
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
-    uint64_t* signal = nccl::utility::loadConst(&proxyCtx->signals) + signalId;
-    return signal;
+    return {nccl::utility::loadConst(&proxyCtx->signals) + signalId,
+            nccl::utility::loadConst(&proxyCtx->signalOffsets)[signalId]};
   }
 };
 
@@ -336,7 +337,9 @@ struct ncclGinApi_ResetSignal<NCCL_NET_DEVICE_GIN_PROXY> {
       uint64_t* signalPtr = (uint64_t*)ncclGetLocalPointer(signal.vaSignal.ncclWindow, signal.vaSignal.signalOffset);
       *signalPtr = 0;
     } else {
-      nccl::utility::loadConst(&proxyCtx->signals)[signal.indexedSignal.signalId] = 0;
+      uint64_t* signalPtr = nccl::utility::loadConst(&proxyCtx->signals) + signal.indexedSignal.signalId;
+      uint64_t* offsetPtr = nccl::utility::loadConst(&proxyCtx->signalOffsets) + signal.indexedSignal.signalId;
+      *offsetPtr = cuda::atomic_ref<uint64_t>{*signalPtr}.load(cuda::memory_order_relaxed);
     }
   }
 };

@@ -92,6 +92,7 @@ NCCL_DEVICE_INLINE static void putImplMode(ncclGinCtx ctx, Coop coop, int peer, 
     }
 
     // cuda::thread_scope_system has the lowest value
+    // DOCA guarantees SCOPE_GPU. Only add another release if SCOPE_SYSTEM is required.
     if ((required == cuda::thread_scope_system) && (given > required)) {
       doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
     }
@@ -187,6 +188,7 @@ NCCL_DEVICE_INLINE static void putValueImplMode(ncclGinCtx ctx, Coop coop, int p
     }
 
     // cuda::thread_scope_system has the lowest value
+    // DOCA guarantees SCOPE_GPU. Only add another release if SCOPE_SYSTEM is required.
     if ((required == cuda::thread_scope_system) && (given > required)) {
       doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
     }
@@ -288,6 +290,7 @@ template <>
 struct ncclGinApi_Wait<NCCL_NET_DEVICE_GIN_GDAKI> {
   NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, ncclGinRequest_t& request, bool hasDescriptor,
                                       ncclGinDescriptorSmem* descriptor, cuda::memory_order ord, uint32_t* abortFlag) {
+    (void)ord; // Ignore. DOCA already guarantees memory_order_acquire
     using nccl::utility::loadConst;
     using nccl::utility::testAbort;
     ncclGinGdakiRequest& req = reinterpret_cast<ncclGinGdakiRequest&>(request);
@@ -415,6 +418,7 @@ template <>
 struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_GDAKI> {
   template <typename Coop>
   NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, Coop coop, cuda::memory_order ord, uint32_t* abortFlag) {
+    (void)ord; // Ignore. DOCA already guarantees memory_order_acquire
     using nccl::utility::loadConst;
     using nccl::utility::testAbort;
 

@@ -389,6 +389,8 @@ static ncclResult_t ncclGinProxyRegMrSym(void* ginCtx, void* addr, size_t size, 
         close(dmabufFd);
       }
       if (registrationResult != ncclSuccess) {
+        // This code path assumes if one MR enters this path, all others will too.
+        // Mixed usage of DataDirect and non-DataDirect breaks GIN ordering guarantees.
         dmabufFd = -1;
         dmabufResult = getDmaBufFd(addr, size, &dmabufFd, true);
         if (dmabufResult == ncclSuccess) {

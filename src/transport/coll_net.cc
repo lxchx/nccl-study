@@ -517,7 +517,9 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
 #if CUDA_VERSION >= 11070
   /* DMA-BUF support */
   if (resources->useGdr && resources->useDmaBuf) {
-    CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)mapMem->cpuPtr, mapMem->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
+    size_t dmaBufSize = mapMem->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)mapMem->cpuPtr, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
     NCCLCHECKGOTO(proxyState->ncclCollNet->regMrDmaBuf(resources->collNetComm, mapMem->cpuPtr, mapMem->size,
                                                        NCCL_PTR_CUDA, 0ULL, dmabuf_fd,
                                                        &resources->sendMhandles[NCCL_PROTO_SIMPLE]),
@@ -598,7 +600,9 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
 #if CUDA_VERSION >= 11070
   /* DMA-BUF support */
   if (resources->useGdr && resources->useDmaBuf) {
-    CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)mapMem->cpuPtr, mapMem->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
+    size_t dmaBufSize = mapMem->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)mapMem->cpuPtr, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
     NCCLCHECKGOTO(proxyState->ncclCollNet->regMrDmaBuf(resources->collNetComm, mapMem->cpuPtr, mapMem->size,
                                                        NCCL_PTR_CUDA, 0ULL, dmabuf_fd,
                                                        &resources->mhandles[NCCL_PROTO_SIMPLE]),
@@ -1320,7 +1324,9 @@ static ncclResult_t sendProxyRegBuffer(struct ncclProxyConnection* connection, s
 #if CUDART_VERSION >= 11070
   /* DMA-BUF support */
   if (resources->useGdr && resources->useDmaBuf) {
-    CUCHECKGOTO(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)info->buffer, info->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
+    size_t dmaBufSize = info->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECKGOTO(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)info->buffer, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
     NCCLCHECKGOTO(proxyState->ncclCollNet->regMrDmaBuf(resources->collNetComm, (void*)info->buffer, info->size, NCCL_PTR_CUDA, 0ULL, dmabuf_fd, &handle), ret, peermem);
     needReg = false;
   }
@@ -1362,7 +1368,9 @@ static ncclResult_t recvProxyRegBuffer(struct ncclProxyConnection* connection, s
   #if CUDART_VERSION >= 11070
   /* DMA-BUF support */
   if (resources->useGdr && resources->useDmaBuf) {
-    CUCHECKGOTO(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)info->buffer, info->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
+    size_t dmaBufSize = info->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECKGOTO(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)info->buffer, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
     NCCLCHECKGOTO(proxyState->ncclCollNet->regMrDmaBuf(resources->collNetComm, (void*)info->buffer, info->size, NCCL_PTR_CUDA, 0ULL, dmabuf_fd, &handle), ret, peermem);
     needReg = false;
   }

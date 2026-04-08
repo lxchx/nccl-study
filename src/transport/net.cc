@@ -965,7 +965,9 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
       if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
         int dmabuf_fd;
-        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
+        size_t dmaBufSize = resources->buffSizes[p];
+        ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
         NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(resources->netSendComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p]));
         (void)close(dmabuf_fd);
       } else // FALL-THROUGH to nv_peermem GDR path
@@ -1123,7 +1125,9 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
       int type = NCCL_NET_MAP_DEV_MEM(map, buffs[p]) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
       if (type == NCCL_PTR_CUDA && resources->useDmaBuf) {
         int dmabuf_fd;
-        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], resources->buffSizes[p], CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
+        size_t dmaBufSize = resources->buffSizes[p];
+        ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+        CUCHECK(cuMemGetHandleForAddressRange((void *)&dmabuf_fd, (CUdeviceptr)resources->buffers[p], dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)));
         NCCLCHECK(proxyState->ncclNet->regMrDmaBuf(resources->netRecvComm, resources->buffers[p], resources->buffSizes[p], type, 0ULL, dmabuf_fd, &resources->mhandles[p]));
         (void)close(dmabuf_fd);
       } else // FALL-THROUGH to nv_peermem GDR path
@@ -1822,7 +1826,9 @@ static ncclResult_t sendProxyRegBuffer(struct ncclProxyConnection* connection, s
   /* DMA-BUF support */
   if (resources->useDmaBuf) {
     int dmabuf_fd;
-    CUCHECKGOTO(cuMemGetHandleForAddressRange((void*)&dmabuf_fd, (CUdeviceptr)info->buffer, info->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
+    size_t dmaBufSize = info->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECKGOTO(cuMemGetHandleForAddressRange((void*)&dmabuf_fd, (CUdeviceptr)info->buffer, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
     NCCLCHECKGOTO(proxyState->ncclNet->regMrDmaBuf(resources->netSendComm, (void*)info->buffer, info->size, NCCL_PTR_CUDA, 0ULL, dmabuf_fd, &handle), ret, peermem);
     (void)close(dmabuf_fd);
     needReg = false;
@@ -1870,7 +1876,9 @@ static ncclResult_t recvProxyRegBuffer(struct ncclProxyConnection* connection, s
   /* DMA-BUF support */
   if (resources->useDmaBuf) {
     int dmabuf_fd;
-    CUCHECKGOTO(cuMemGetHandleForAddressRange((void*)&dmabuf_fd, (CUdeviceptr)info->buffer, info->size, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
+    size_t dmaBufSize = info->size;
+    ALIGN_SIZE(dmaBufSize, ncclOsGetPageSize());
+    CUCHECKGOTO(cuMemGetHandleForAddressRange((void*)&dmabuf_fd, (CUdeviceptr)info->buffer, dmaBufSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, getHandleForAddressRangeFlags(resources->useGdr)), ret, peermem);
     NCCLCHECKGOTO(proxyState->ncclNet->regMrDmaBuf(resources->netRecvComm, (void*)info->buffer, info->size, NCCL_PTR_CUDA, 0ULL, dmabuf_fd, &handle), ret, peermem);
     (void)close(dmabuf_fd);
     needReg = false;

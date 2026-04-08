@@ -1135,6 +1135,11 @@ ncclResult_t ncclDevrCommCreateInternal(
     devr->ginEnabled = true;
   }
 
+  if (reqs->worldGinBarrierCount > 0 && requestedConnectionType == NCCL_GIN_CONNECTION_RAIL) {
+    WARN("Cannot create worldGinBarrier with NCCL_GIN_CONNECTION_RAIL.");
+    return ncclInvalidArgument;
+  }
+
   if (ginActivated) {
     NCCLCHECKGOTO(ncclGinConnectOnce(comm), ret, fail);
     // Register all preexisting memories with GIN. Update the windows later when

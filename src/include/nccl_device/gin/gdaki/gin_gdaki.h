@@ -272,17 +272,13 @@ struct ncclGinApi_FlushAsync<NCCL_NET_DEVICE_GIN_GDAKI> {
     req->peer = peer;
     ncclGinGdakiGPUContext* gdaki = &((struct ncclGinGdakiGPUContext*)ctx.handle)[ctx.contextId];
     doca_gpu_dev_verbs_qp* qp = loadConst(&gdaki->gdqp) + peer;
-    doca_gpu_dev_verbs_addr sink_addr;
-    sink_addr.addr = 0;
-    sink_addr.key = loadConst(&gdaki->sink_buffer_lkey);
-    uint32_t codeOpt = nccl::gin::gdaki::docaOptFlagsFromGinOptFlags(optFlags);
-    doca_gpu_dev_verbs_get<
+    doca_gpu_dev_verbs_addr daddr;
+    daddr.addr = 0;
+    daddr.key = loadConst(&gdaki->sink_buffer_lkey);
+    doca_gpu_dev_verbs_mcst<
         DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-        DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO,
-        DOCA_GPUNETIO_VERBS_EXEC_SCOPE_THREAD,
-        DOCA_GPUNETIO_VERBS_MCST_ENABLED,
-        DOCA_GPUNETIO_VERBS_BLOCKING_MODE_DISABLED>(
-        qp, sink_addr, sink_addr, size_t(0), sink_addr, &req->docaTicket, codeOpt);
+        DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO>(
+        qp, daddr, &req->docaTicket);
   }
 };
 

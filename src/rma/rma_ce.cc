@@ -11,6 +11,7 @@
 #include "checks.h"
 #include "comm.h"
 #include "collectives.h"
+#include "cudawrap.h"
 #include "rma/rma.h"
 #include "rma/rma_ce.h"
 
@@ -57,15 +58,15 @@ ncclResult_t ncclRmaCeInit(struct ncclComm* comm){
 
     // Initialize ack flags to 1
     for (int r = 0; r < nRanks; r++) ackInitHost[r] = 1;
-    CUDACHECKGOTO(cudaMemcpy(ceCtx->graphAckDev, ackInitHost, nRanks * sizeof(uint64_t), cudaMemcpyHostToDevice), ret, fail);
+    NCCLCHECKGOTO(ncclCudaMemcpy(ceCtx->graphAckDev, ackInitHost, nRanks), ret, fail);
 
     // Allocate device-resident constants for graph-safe D2D signal/ack writes
-    NCCLCHECKGOTO(ncclMemAlloc((void**)&ceCtx->signalConstDev, 2 * sizeof(uint64_t)), ret, fail);
+    NCCLCHECKGOTO(ncclCudaCalloc(&ceCtx->signalConstDev, 2, comm->memManager), ret, fail);
     ceCtx->signalConstZeroDev = &ceCtx->signalConstDev[0];
     ceCtx->signalConstOneDev = &ceCtx->signalConstDev[1];
     {
       uint64_t zeroone[] = {0, 1};
-      CUDACHECKGOTO(cudaMemcpy(ceCtx->signalConstDev, zeroone, sizeof(zeroone), cudaMemcpyHostToDevice), ret, fail);
+      NCCLCHECKGOTO(ncclCudaMemcpy(ceCtx->signalConstDev, zeroone, 2), ret, fail);
     }
 
     // Allocate host buffer to track expected non-graph signal values
@@ -73,6 +74,7 @@ ncclResult_t ncclRmaCeInit(struct ncclComm* comm){
 
     // Allocate per-rank operation sequence counters
     NCCLCHECKGOTO(ncclCalloc(&ceCtx->signalOpSeqs, comm->nRanks), ret, fail);
+    NCCLCHECKGOTO(ncclCudaCalloc(&ceCtx->signalOpSeqsDev, 1, comm->memManager), ret, fail);
 
   }
 
@@ -119,12 +121,13 @@ ncclResult_t ncclRmaCeFinalize(struct ncclComm* comm){
 
     // Free per-rank operation sequence counters
     if (ceCtx->signalOpSeqs) free(ceCtx->signalOpSeqs);
+    if (ceCtx->signalOpSeqsDev) NCCLCHECKGOTO(ncclCudaFree(ceCtx->signalOpSeqsDev, comm->memManager), ret, fail);
 
     // Free host signals buffer
     if (ceCtx->signalsHost) free(ceCtx->signalsHost);
 
     // Free device-resident constants
-    if (ceCtx->signalConstDev) NCCLCHECKGOTO(ncclMemFree(ceCtx->signalConstDev), ret, fail);
+    if (ceCtx->signalConstDev) NCCLCHECKGOTO(ncclCudaFree(ceCtx->signalConstDev, comm->memManager), ret, fail);
 
     // Deregister and free signal window
     if (ceCtx->signalsWin) NCCLCHECKGOTO(ncclCommWindowDeregister(comm, ceCtx->signalsWin->vidmem), ret, fail);
@@ -214,7 +217,8 @@ ncclResult_t ncclRmaCePutLaunch(struct ncclComm* comm, struct ncclKernelPlan* pl
         void* peerSignal;
         NCCLCHECKGOTO(ncclDevrGetLsaRankPtr(comm, ceCtx->signalsWin, ceCtx->signalOffset + rankSlot, peerLsaRank, &peerSignal), ret, fail);
         ceCtx->signalOpSeqs[task->peer]++;
-        CUDACHECKGOTO(cudaMemcpyAsync(peerSignal, &ceCtx->signalOpSeqs[task->peer], sizeof(uint64_t), cudaMemcpyHostToDevice, stream), ret, fail);
+        CUCHECKGOTO(cuStreamWriteValue64(stream, (CUdeviceptr)ceCtx->signalOpSeqsDev, ceCtx->signalOpSeqs[task->peer], CU_STREAM_WRITE_VALUE_DEFAULT), ret, fail);
+        CUDACHECKGOTO(cudaMemcpyAsync(peerSignal, ceCtx->signalOpSeqsDev, sizeof(uint64_t), cudaMemcpyDeviceToDevice, stream), ret, fail);
       } else {
         // Graph: write signal=1 to peer's graphSignalsDev (separate from non-graph signals)
         void* peerGraphSignal;

@@ -25,6 +25,7 @@ struct ncclRmaCeCtx {
 
   // Per-rank sequence number for non-graph signal operations
   uint64_t* signalOpSeqs;
+  uint64_t *signalOpSeqsDev;
   // Host buffer to track the expected values of the non-graph signals
   uint64_t* signalsHost;
 

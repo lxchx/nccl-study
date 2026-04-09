@@ -447,9 +447,11 @@ ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* system, int rank, int64_t n
   struct ncclTopoNode* net = system->nodes[NET].nodes+n;
   NCCLCHECK(ncclTopoRankToIndex(system, rank, &g, /*showWarn=*/true));
   struct ncclTopoNode* gpu = system->nodes[GPU].nodes+g;
+#ifdef ENABLE_TRACE
   char gpuNetMsg[1024] = "";
   snprintf(gpuNetMsg, sizeof(gpuNetMsg), "GPU/%ld-%ld (rank %d) - NET/%ld-%ld (", NCCL_TOPO_ID_SYSTEM_ID(gpu->id), NCCL_TOPO_ID_LOCAL_ID(gpu->id), rank,
            NCCL_TOPO_ID_SYSTEM_ID(net->id), NCCL_TOPO_ID_LOCAL_ID(net->id));
+#endif
 
   // Check that both the NIC and GPUs support it
   if (net->net.gdrSupport == 0) return ncclSuccess;
@@ -487,12 +489,16 @@ ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* system, int rank, int64_t n
     NCCLCHECK(ncclTopoRankToIndex(system, proxyRank, &g, /*showWarn=*/true));
     gpu = system->nodes[GPU].nodes+g;
     distance = gpu->paths[NET][n].type;
+#ifdef ENABLE_TRACE
     snprintf(gpuNetMsg+strlen(gpuNetMsg), sizeof(gpuNetMsg)-strlen(gpuNetMsg), " using PXN via GPU/%ld-%ld, ", NCCL_TOPO_ID_SYSTEM_ID(gpu->id), NCCL_TOPO_ID_LOCAL_ID(gpu->id));
+#endif
   }
 
   if (distance > netGdrLevel) {
+#ifdef ENABLE_TRACE
     snprintf(gpuNetMsg + strlen(gpuNetMsg), sizeof(gpuNetMsg) - strlen(gpuNetMsg), "distance %d > %d)", distance, netGdrLevel);
-    INFO(NCCL_GRAPH | NCCL_NET, "GPU Direct RDMA Disabled for %s", gpuNetMsg);
+    TRACE(NCCL_GRAPH | NCCL_NET, "GPU Direct RDMA Disabled for %s", gpuNetMsg);
+#endif
     return ncclSuccess;
   }
 
@@ -502,8 +508,10 @@ ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* system, int rank, int64_t n
   if (gpu->paths[CPU][c].type == PATH_C2C && distance != PATH_P2C) *gdrMode = ncclTopoGdrModePci;
   else *gdrMode = ncclTopoGdrModeDefault;
 
-  snprintf(gpuNetMsg + strlen(gpuNetMsg), sizeof(gpuNetMsg) - strlen(gpuNetMsg), "distance %d <= %d, read %d, mode %s)", distance, netGdrLevel,read, ncclTopoGdrModeStr[*gdrMode]);
-  INFO(NCCL_GRAPH | NCCL_NET, "GPU Direct RDMA Enabled for %s", gpuNetMsg);
+#ifdef ENABLE_TRACE
+  snprintf(gpuNetMsg + strlen(gpuNetMsg), sizeof(gpuNetMsg) - strlen(gpuNetMsg), "distance %d <= %d, read %d, mode %s)", distance, netGdrLevel, read, ncclTopoGdrModeStr[*gdrMode]);
+  TRACE(NCCL_GRAPH | NCCL_NET, "GPU Direct RDMA Enabled for %s", gpuNetMsg);
+#endif
   return ncclSuccess;
 }
 

@@ -5,7 +5,7 @@
  * See LICENSE.txt for more license information
  *************************************************************************/
 
-// C API implementation for NcclParam access.
+// C API implementation for ncclParam access.
 //
 // This file implements the C-facing API declared in param/c_api.h.
 
@@ -21,9 +21,9 @@
 
 USE_NCCL_PARAM(ncclParamDumpAllFlag, bool);
 
-// Helper to unwrap opaque handle to NcclParamBase*
-static inline NcclParamBase* unwrap(ncclParamHandle_t* h) {
-  return reinterpret_cast<NcclParamBase*>(h);
+// Helper to unwrap opaque handle to ncclParamRegistry::mapEntry*
+static inline ncclParamRegistry::mapEntry* unwrap(ncclParamHandle_t* h) {
+  return reinterpret_cast<ncclParamRegistry::mapEntry*>(h);
 }
 
 static inline void ncclParamCheckFlag(uint64_t flags, const char* key) {
@@ -51,111 +51,95 @@ static inline void ncclParamCheckFlag(uint64_t flags, const char* key) {
 // Handle-based Access Interface
 // ============================================================================
 
-NCCL_API(ncclParamStatus_t, ncclParamBind, ncclParamHandle_t** out, const char* key);
-ncclParamStatus_t ncclParamBind(ncclParamHandle_t** out, const char* key) {
-  if (!out || !key) return NCCL_PARAM_BAD_ARGUMENT;
-  NcclParamBase* param = NcclParamRegistry::find(key);
-  if (!param) return NCCL_PARAM_NOT_FOUND;
-  ncclParamCheckFlag(param->getFlags(), key);
-  *out = reinterpret_cast<ncclParamHandle_t*>(param);
-  return NCCL_PARAM_OK;
+NCCL_API(ncclResult_t, ncclParamBind, ncclParamHandle_t** out, const char* key);
+ncclResult_t ncclParamBind(ncclParamHandle_t** out, const char* key) {
+  if (!out || !key) return ncclInvalidArgument;
+  auto* entry = ncclParamRegistry::find(key);
+  if (!entry) {
+    INFO(NCCL_ENV, "PARAM: key \"%s\" not found in registry", key);
+    return ncclInvalidArgument;
+  }
+  ncclParamCheckFlag(entry->info.flags, key);
+  *out = reinterpret_cast<ncclParamHandle_t*>(entry);
+  return ncclSuccess;
 }
 
 // ============================================================================
-// Signed Integer Getters
+// Typed Getters — dispatch via typeId + getRawData()
 // ============================================================================
 
-NCCL_API(ncclParamStatus_t, ncclParamGetI8, ncclParamHandle_t* h, int8_t* out);
-ncclParamStatus_t ncclParamGetI8(ncclParamHandle_t* h, int8_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getI8(out));
-}
+#define NCCL_PARAM_DEFINE_TYPED_GETTER(suffix, ctype, tid)                    \
+  NCCL_API(ncclResult_t, ncclParamGet##suffix,                               \
+           ncclParamHandle_t* h, ctype* out);                                 \
+  ncclResult_t ncclParamGet##suffix(ncclParamHandle_t* h, ctype* out) {      \
+    if (!h || !out) return ncclInvalidArgument;                               \
+    auto* e = unwrap(h);                                                      \
+    if (e->info.typeId != (tid)) {                                            \
+      INFO(NCCL_ENV, "PARAM: type mismatch for key \"%s\"", e->info.key);    \
+      return ncclInvalidArgument;                                             \
+    }                                                                         \
+    int len = 0;                                                              \
+    return e->param->getRawData(out, sizeof(*out), &len);                     \
+  }
 
-NCCL_API(ncclParamStatus_t, ncclParamGetI16, ncclParamHandle_t* h, int16_t* out);
-ncclParamStatus_t ncclParamGetI16(ncclParamHandle_t* h, int16_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getI16(out));
-}
+NCCL_PARAM_DEFINE_TYPED_GETTER(I8,  int8_t,   NCCL_PARAM_TYPE_I8)
+NCCL_PARAM_DEFINE_TYPED_GETTER(I16, int16_t,  NCCL_PARAM_TYPE_I16)
+NCCL_PARAM_DEFINE_TYPED_GETTER(I32, int32_t,  NCCL_PARAM_TYPE_I32)
+NCCL_PARAM_DEFINE_TYPED_GETTER(I64, int64_t,  NCCL_PARAM_TYPE_I64)
+NCCL_PARAM_DEFINE_TYPED_GETTER(U8,  uint8_t,  NCCL_PARAM_TYPE_U8)
+NCCL_PARAM_DEFINE_TYPED_GETTER(U16, uint16_t, NCCL_PARAM_TYPE_U16)
+NCCL_PARAM_DEFINE_TYPED_GETTER(U32, uint32_t, NCCL_PARAM_TYPE_U32)
+NCCL_PARAM_DEFINE_TYPED_GETTER(U64, uint64_t, NCCL_PARAM_TYPE_U64)
 
-NCCL_API(ncclParamStatus_t, ncclParamGetI32, ncclParamHandle_t* h, int32_t* out);
-ncclParamStatus_t ncclParamGetI32(ncclParamHandle_t* h, int32_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getI32(out));
-}
-
-NCCL_API(ncclParamStatus_t, ncclParamGetI64, ncclParamHandle_t* h, int64_t* out);
-ncclParamStatus_t ncclParamGetI64(ncclParamHandle_t* h, int64_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getI64(out));
-}
-
-// ============================================================================
-// Unsigned Integer Getters
-// ============================================================================
-
-NCCL_API(ncclParamStatus_t, ncclParamGetU8, ncclParamHandle_t* h, uint8_t* out);
-ncclParamStatus_t ncclParamGetU8(ncclParamHandle_t* h, uint8_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getU8(out));
-}
-
-NCCL_API(ncclParamStatus_t, ncclParamGetU16, ncclParamHandle_t* h, uint16_t* out);
-ncclParamStatus_t ncclParamGetU16(ncclParamHandle_t* h, uint16_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getU16(out));
-}
-
-NCCL_API(ncclParamStatus_t, ncclParamGetU32, ncclParamHandle_t* h, uint32_t* out);
-ncclParamStatus_t ncclParamGetU32(ncclParamHandle_t* h, uint32_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getU32(out));
-}
-
-NCCL_API(ncclParamStatus_t, ncclParamGetU64, ncclParamHandle_t* h, uint64_t* out);
-ncclParamStatus_t ncclParamGetU64(ncclParamHandle_t* h, uint64_t* out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getU64(out));
-}
+#undef NCCL_PARAM_DEFINE_TYPED_GETTER
 
 // ============================================================================
 // String Accessors
 // ============================================================================
 
-NCCL_API(ncclParamStatus_t, ncclParamGetStr, ncclParamHandle_t* h, const char** out);
-ncclParamStatus_t ncclParamGetStr(ncclParamHandle_t* h, const char** out) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
+NCCL_API(ncclResult_t, ncclParamGetStr, ncclParamHandle_t* h, const char** out);
+ncclResult_t ncclParamGetStr(ncclParamHandle_t* h, const char** out) {
+  if (!h || !out) return ncclInvalidArgument;
+  auto* e = unwrap(h);
+  if (e->info.typeId != NCCL_PARAM_TYPE_CSTR) {
+    INFO(NCCL_ENV, "PARAM: type mismatch for key \"%s\"", e->info.key);
+    return ncclInvalidArgument;
+  }
   // Thread-local buffer to keep the returned pointer valid for the caller
   static thread_local std::string buffer;
-  buffer = unwrap(h)->toString();
+  buffer = unwrap(h)->param->toString();
   *out = buffer.c_str();
-  return NCCL_PARAM_OK;
+  return ncclSuccess;
 }
 
-NCCL_API(ncclParamStatus_t, ncclParamGet, ncclParamHandle_t* h, void* out, int maxLen, int* len);
-ncclParamStatus_t ncclParamGet(ncclParamHandle_t* h, void* out, int maxLen, int* len) {
-  if (!h || !out) return NCCL_PARAM_BAD_ARGUMENT;
-  return static_cast<ncclParamStatus_t>(unwrap(h)->getRawData(out, maxLen, len));
+NCCL_API(ncclResult_t, ncclParamGet, ncclParamHandle_t* h, void* out, int maxLen, int* len);
+ncclResult_t ncclParamGet(ncclParamHandle_t* h, void* out, int maxLen, int* len) {
+  if (!h || !out) return ncclInvalidArgument;
+  return unwrap(h)->param->getRawData(out, maxLen, len);
 }
 
 // ============================================================================
 // Typeless Access Interface
 // ============================================================================
-NCCL_API(ncclParamStatus_t, ncclParamGetAllParameterKeys, const char*** table, int* tableLen);
-ncclParamStatus_t ncclParamGetAllParameterKeys(const char*** table, int* tableLen) {
-  if (!table || !tableLen) return NCCL_PARAM_BAD_ARGUMENT;
+NCCL_API(ncclResult_t, ncclParamGetAllParameterKeys, const char*** table, int* tableLen);
+ncclResult_t ncclParamGetAllParameterKeys(const char*** table, int* tableLen) {
+  if (!table || !tableLen) return ncclInvalidArgument;
 
   // Thread-local storage: keyTable owns string copies so ptrTable pointers remain
   // valid even if the registry map changes between calls.
   static thread_local std::vector<std::string> keyTable;
   static thread_local std::vector<const char*> ptrTable;
 
-  std::lock_guard<std::mutex> regLock(NcclParamRegistry::mutex());
-  auto& map = NcclParamRegistry::instance();
+  bool showAll = ncclParamDumpAllFlag();
+
+  std::lock_guard<std::mutex> regLock(ncclParamRegistry::mutex());
+  auto& map = ncclParamRegistry::instance();
 
   keyTable.clear();
   keyTable.reserve(map.size());
-  for (const auto& entry : map) {
-    keyTable.emplace_back(entry.first.data(), entry.first.size());
+  for (const auto& kv : map) {
+    if (!showAll && !(kv.second.info.flags & NCCL_PARAM_FLAG_PUBLISHED)) continue;
+    keyTable.emplace_back(kv.first.data(), kv.first.size());
   }
 
   ptrTable.clear();
@@ -166,40 +150,39 @@ ncclParamStatus_t ncclParamGetAllParameterKeys(const char*** table, int* tableLe
 
   *table = ptrTable.data();
   *tableLen = static_cast<int>(ptrTable.size());
-  return NCCL_PARAM_OK;
+  return ncclSuccess;
 }
 
-NCCL_API(ncclParamStatus_t, ncclParamGetParameter, const char* key, const char** value, int* valueLen);
-ncclParamStatus_t ncclParamGetParameter(const char* key, const char** value, int* valueLen) {
-  if (!key || !value || !valueLen) return NCCL_PARAM_BAD_ARGUMENT;
+NCCL_API(ncclResult_t, ncclParamGetParameter, const char* key, const char** value, int* valueLen);
+ncclResult_t ncclParamGetParameter(const char* key, const char** value, int* valueLen) {
+  if (!key || !value || !valueLen) return ncclInvalidArgument;
 
   // Thread-local buffer to keep the returned pointer valid for the caller
   static thread_local std::string resultHolder;
 
-  NcclParamBase* param = NcclParamRegistry::find(key);
+  auto* entry = ncclParamRegistry::find(key);
 
-  if (param != nullptr) {
-    ncclParamCheckFlag(param->getFlags(), key);
-    resultHolder = param->toString();
+  if (entry != nullptr) {
+    ncclParamCheckFlag(entry->info.flags, key);
+    resultHolder = entry->param->toString();
     *value = resultHolder.c_str();
     *valueLen = static_cast<int>(resultHolder.length());
-    return NCCL_PARAM_OK;
+    return ncclSuccess;
   } else {
     *value = nullptr;
     *valueLen = 0;
-    return NCCL_PARAM_NOT_FOUND;
+    INFO(NCCL_ENV, "PARAM: key \"%s\" not found in registry", key);
+    return ncclInvalidArgument;
   }
 }
 
 NCCL_API(void, ncclParamDumpAll);
 void ncclParamDumpAll(){
   bool showAll = ncclParamDumpAllFlag();
-  printf("=== NcclParam Registry Dump ===\n");
-  std::lock_guard<std::mutex> regLock(NcclParamRegistry::mutex());
-  for (auto& entry : NcclParamRegistry::instance()) {
-    std::string d = entry.second->dump(showAll);
-    if (!d.empty()) {
-      printf("%s\n", d.c_str());
-    }
+  printf("=== ncclParam Registry Dump ===\n");
+  std::lock_guard<std::mutex> regLock(ncclParamRegistry::mutex());
+  for (auto& kv : ncclParamRegistry::instance()) {
+    if (!showAll && !(kv.second.info.flags & NCCL_PARAM_FLAG_PUBLISHED)) continue;
+    printf("%s\n", kv.second.param->dump().c_str());
   }
 }

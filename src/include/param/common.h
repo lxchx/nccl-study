@@ -12,30 +12,58 @@
 #ifndef PARAM_COMMON_H_INCLUDED
 #define PARAM_COMMON_H_INCLUDED
 
+#include <stdint.h>
+#include "nccl.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Status codes for NcclParam C API functions
 typedef enum {
-  NCCL_PARAM_OK             = 0,   // Success
-  NCCL_PARAM_NOT_FOUND      = 1,   // Parameter key not found in registry
-  NCCL_PARAM_TYPE_MISMATCH  = 2,   // Requested type does not match parameter type
-  NCCL_PARAM_VALUE_CACHED   = 3,   // Cached parameter, rejects sets after initialized
-  NCCL_PARAM_INVALID_VALUE  = 4,   // Value rejected by parser (out of range, invalid format)
-  NCCL_PARAM_BAD_ARGUMENT   = 5,   // Invalid argument (null pointer, etc.)
-} ncclParamStatus_t;
+  NCCL_PARAM_FLAG_NONE       = 0,
+  NCCL_PARAM_FLAG_PUBLISHED  = 1ULL << 0, // public parameters in NCCL doc
+  NCCL_PARAM_FLAG_DEPRECATED = 1ULL << 1,
+  NCCL_PARAM_FLAG_CACHED     = 1ULL << 2, // value cached, subsequent change has no effect
+  NCCL_PARAM_FLAG_UNUSED     = 1ULL << 3 // parameter has no effect
+} ncclParamFlag_t;
 
-// Source provenance: how a parameter's value was set
+// Type IDs for param info. non-integers, non-boolean and non-const-char* is mapped to RAW type.
 typedef enum {
-  NCCL_PARAM_SOURCE_DEFAULT     = 0,
-  NCCL_PARAM_SOURCE_ENV_VAR     = 1,  // Stub - for EnvVar that cannot be set by EnvPlugins
-  NCCL_PARAM_SOURCE_ENV_PLUGIN  = 2,
-  NCCL_PARAM_SOURCE_CONFIG_FILE = 3,  // Stub - not yet implemented
-} ncclParamSource_t;
+  NCCL_PARAM_TYPE_I8 = 1,
+  NCCL_PARAM_TYPE_I16,
+  NCCL_PARAM_TYPE_I32,
+  NCCL_PARAM_TYPE_I64,
+  NCCL_PARAM_TYPE_U8,
+  NCCL_PARAM_TYPE_U16,
+  NCCL_PARAM_TYPE_U32,
+  NCCL_PARAM_TYPE_U64,
+  NCCL_PARAM_TYPE_BOOL,
+  NCCL_PARAM_TYPE_CSTR,
+  NCCL_PARAM_TYPE_RAW
+} ncclParamTypeId_t;
+
+// Parameter metadata. All const char* fields must point to string literals.
+typedef struct {
+  ncclParamTypeId_t typeId;
+  uint64_t flags;
+  const char* typeStr;
+  const char* key;
+  const char* desc;
+} ncclParamInfo_t;
 
 #ifdef __cplusplus
 }
+#endif
+
+#ifdef __cplusplus
+#include <string>
+
+struct ncclParamInterface {
+  virtual ~ncclParamInterface() = default;
+  virtual ncclResult_t getRawData(void* out, int maxLen, int* len) = 0;
+  virtual std::string toString() = 0;
+  virtual std::string dump() = 0;
+};
 #endif
 
 #endif /* PARAM_COMMON_H_INCLUDED */

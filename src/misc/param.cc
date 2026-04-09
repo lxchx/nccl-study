@@ -72,11 +72,7 @@ void initEnv() {
 }
 
 static void ncclGetCachePolicy(char const* env, int8_t* noCache) {
-  using NcclStringSet = std::unordered_set<std::string>;
-  USE_NCCL_PARAM(ncclParamNoCacheSet, NcclStringSet);
-  static bool noCacheAll = ncclParamNoCacheSet().count("ALL");
-  *noCache = (noCacheAll || ncclParamNoCacheSet().count(env) > 0) ? /*noCache*/ 1 : /*cache*/ 0;
-  if (*noCache) INFO(NCCL_ENV, "Disabling caching for environment variable %s.", env);
+  *noCache = ncclParamIsCacheDisabled(env) ? /*noCache*/ 1 : /*cache*/ 0;
 }
 
 int64_t ncclLoadParam(char const* env, int64_t deftVal, int64_t uninitialized, int64_t* cache, int8_t* noCache) {

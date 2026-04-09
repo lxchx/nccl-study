@@ -14,14 +14,22 @@
 
 int main(int argc, char* argv[]) {
   bool longFormat = false;
+  bool showAll = false;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-l") == 0) {
       longFormat = true;
+    } else if (strcmp(argv[i], "-a") == 0) {
+      showAll = true;
     } else {
-      fprintf(stderr, "Usage: %s [-l]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [-l] [-a]\n", argv[0]);
       fprintf(stderr, "  -l  long format (show values and descriptions)\n");
+      fprintf(stderr, "  -a  show all parameters including private ones\n");
       return EXIT_FAILURE;
     }
+  }
+
+  if (showAll) {
+    setenv("NCCL_PARAM_DUMP_ALL", "TRUE", 1);
   }
 
   bool initialized = false;
@@ -29,17 +37,9 @@ int main(int argc, char* argv[]) {
   int dev = 0;
 
   cudaError_t ce = cudaSetDevice(dev);
-  if (ce != cudaSuccess) {
-    fprintf(stderr, "WARNING: cudaSetDevice failed (%s). "
-            "Parameters from plugins may not be available.\n",
-            cudaGetErrorString(ce));
-  } else {
+  if (ce == cudaSuccess) {
     ncclResult_t nr = ncclCommInitAll(&comm, 1, &dev);
-    if (nr != ncclSuccess) {
-      fprintf(stderr, "WARNING: ncclCommInitAll failed (%s). "
-              "Parameters from plugins may not be available.\n",
-              ncclGetErrorString(nr));
-    } else {
+    if (nr == ncclSuccess) {
       initialized = true;
     }
   }

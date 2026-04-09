@@ -47,6 +47,7 @@ enum ncclGinOptFlags {
 enum ncclGinResourceSharingMode : uint8_t {
   NCCL_GIN_RESOURCE_SHARING_GPU = 0,
   NCCL_GIN_RESOURCE_SHARING_CTA = 1,
+  NCCL_GIN_RESOURCE_SHARING_THREAD = 2,
 };
 
 struct ncclGinCtx {

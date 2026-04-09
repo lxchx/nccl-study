@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <cassert>
 
-#if __CUDA_ARCH__ >= 1000 && defined(ENABLE_TMA)
+#if __CUDA_ARCH__ >= 1000
 
 #include <cuda_awbarrier_primitives.h> // __mbarrier_*
 

@@ -99,6 +99,7 @@ ncclResult_t wrap_ibv_symbols(void) {
 NCCL_PARAM(IbMQpRetryAll, "IB_MQP_RETRY_ALL", 0);
 NCCL_PARAM(IbMQpRetryCnt, "IB_MQP_RETRY_CNT", 34);
 NCCL_PARAM(IbMQpRetryTimeout, "IB_MQP_RETRY_SLEEP_MSEC", 100); // in milliseconds
+NCCL_PARAM(IbQueryPortSpeed, "IB_QUERY_PORT_SPEED", 1);
 
 #define IBV_ERR_EQ(e, code)        (e == code || e == (-code))
 #define IBV_MQP_RETRY_ERRNO(e)     (IBV_ERR_EQ(e, ETIMEDOUT))
@@ -318,6 +319,13 @@ ncclResult_t wrap_ibv_query_ece(struct ibv_qp *qp, struct ibv_ece *ece, int* sup
 
 ncclResult_t wrap_ibv_set_ece(struct ibv_qp *qp, struct ibv_ece *ece, int* supported) { /*returns 0 on success, or the value of errno on failure (which indicates the failure reason)*/
   IBV_INT_CHECK_RET_ERRNO_OPTIONAL(ibvSymbols, ibv_internal_set_ece, ibv_internal_set_ece(qp, ece), 0, "ibv_set_ece", supported);
+}
+
+ncclResult_t wrap_ibv_query_port_speed(struct ibv_context *context, uint8_t port_num, uint64_t *speed) {
+  if (!ncclParamIbQueryPortSpeed() || ibvSymbols.ibv_internal_query_port_speed == NULL) {
+    return ncclSystemError;
+  }
+  IBV_INT_CHECK_RET_ERRNO(ibvSymbols, ibv_internal_query_port_speed, ibv_internal_query_port_speed(context, port_num, speed), 0, "ibv_query_port_speed");
 }
 
 ncclResult_t wrap_ibv_event_type_str(char **ret, enum ibv_event_type event) {

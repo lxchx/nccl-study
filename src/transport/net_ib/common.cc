@@ -22,10 +22,10 @@ ncclProfilerCallback_t ncclProfilerFunction;
 NCCL_PARAM(IbSplitDataOnQps, "IB_SPLIT_DATA_ON_QPS", 0);
 NCCL_PARAM(IbPrepostReceiveWorkRequests, "IB_PREPOST_RECEIVE_WORK_REQUESTS", -2);
 NCCL_PARAM(IbAsyncEvents,"IB_RETURN_ASYNC_EVENTS",1);
+
 extern int ncclParamIbReceiverSideMatchingScheme();
 extern int ncclParamIbOooRq();
 extern int ncclParamIbResiliencyPortFailover();
-
 
 ncclResult_t ncclIbStatsCheckFatalCount(struct ncclIbStats* stat, const char* funcName) {
   if (ncclParamIbAsyncEvents() && COMPILER_ATOMIC_LOAD(&stat->fatalErrorCount, std::memory_order_relaxed)) {
@@ -144,6 +144,16 @@ void* ncclIbAsyncThreadMain(void* args) {
     case IBV_EVENT_GID_CHANGE:
       WARN("NET/IB : %s:%d GID table changed", dev->devName, dev->portNum);
       break;
+    case IBV_EVENT_DEVICE_SPEED_CHANGE: {
+      uint64_t newSpeed = 0;
+      char speedStr[32] = "";
+      // ibv_query_port_speed returns speed in granularity of 100 Mbps
+      if (wrap_ibv_query_port_speed(dev->context, dev->portNum, &newSpeed) == ncclSuccess) {
+        snprintf(speedStr, sizeof(speedStr), "%lu", (unsigned long)(newSpeed * 100));
+      }
+      INFO(NCCL_NET, "NET/IB : %s:%d speed change detected: %d -> %s Mbps", dev->devName, dev->portNum, dev->speed, strlen(speedStr) ? speedStr : "N/A");
+      break;
+    }
     case IBV_EVENT_PATH_MIG_ERR:
     case IBV_EVENT_PORT_ERR:
     case IBV_EVENT_PATH_MIG:

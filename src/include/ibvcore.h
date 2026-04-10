@@ -272,6 +272,8 @@ enum ibv_event_type {
 	IBV_EVENT_QP_LAST_WQE_REACHED,
 	IBV_EVENT_CLIENT_REREGISTER,
 	IBV_EVENT_GID_CHANGE,
+	IBV_EVENT_WQ_FATAL,
+	IBV_EVENT_DEVICE_SPEED_CHANGE,
 
 	/* new experimental events start here leaving enough
 	 * room for 14 events which should be enough

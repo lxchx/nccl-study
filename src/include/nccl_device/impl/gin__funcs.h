@@ -711,10 +711,32 @@ NCCL_DEVICE_INLINE uint64_t ncclGinReadSignal(
 #if NCCL_CHECK_CUDACC
 
 template<unsigned beMask>
-template<
-  typename Coop,
-  typename DescriptorSmem
->
+template<typename Coop, typename DescriptorSmem>
+NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::wait(ncclGinRequest_t& request, Coop coop,
+                                                          DescriptorSmem descriptor, cuda::memory_order ord) const {
+  coop.sync();
+  if (coop.thread_rank() == 0) {
+    ncclGinCall<ncclGinApi_Wait>(this->_makeCtx(), request,
+        ncclGin_isDescriptor(descriptor), ncclGin_getDescriptor(descriptor), ord, this->comm.abortFlag);
+  }
+  coop.sync();
+}
+
+template<unsigned beMask>
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::flushAsync(ncclTeam team, uint32_t peer, ncclGinRequest_t* outRequest,
+                                                                Coop coop, uint32_t optFlags) const {
+  using nccl::gin::internal::teamRankToGinRank;
+  coop.sync();
+  if (coop.thread_rank() == 0) {
+    ncclGinCall<ncclGinApi_FlushAsync>(this->_makeCtx(), teamRankToGinRank(this->comm, team, peer), outRequest,
+                                       optFlags);
+  }
+  coop.sync();
+}
+
+template<unsigned beMask>
+template<typename Coop, typename DescriptorSmem>
 NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::get(
     ncclTeam team, int peer,
     ncclWindow_t remoteWnd, size_t remoteOffset,

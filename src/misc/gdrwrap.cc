@@ -16,6 +16,7 @@
 static gdr_t (*gdr_internal_open)(void);
 static int (*gdr_internal_close)(gdr_t g);
 static int (*gdr_internal_pin_buffer)(gdr_t g, unsigned long addr, size_t size, uint64_t p2p_token, uint32_t va_space, gdr_mh_t *handle);
+static int (*gdr_internal_pin_buffer_v2)(gdr_t g, unsigned long addr, size_t size, uint32_t flags, gdr_mh_t *handle);
 static int (*gdr_internal_unpin_buffer)(gdr_t g, gdr_mh_t handle);
 static int (*gdr_internal_get_info)(gdr_t g, gdr_mh_t handle, gdr_info_t *info);
 static int (*gdr_internal_map)(gdr_t g, gdr_mh_t handle, void **va, size_t size);
@@ -75,6 +76,7 @@ static void initOnceFunc(void) {
   LOAD_SYM(gdrhandle, "gdr_open", gdr_internal_open);
   LOAD_SYM(gdrhandle, "gdr_close", gdr_internal_close);
   LOAD_SYM(gdrhandle, "gdr_pin_buffer", gdr_internal_pin_buffer);
+  LOAD_SYM_OPTIONAL(gdrhandle, "gdr_pin_buffer_v2", gdr_internal_pin_buffer_v2);
   LOAD_SYM(gdrhandle, "gdr_unpin_buffer", gdr_internal_unpin_buffer);
   LOAD_SYM(gdrhandle, "gdr_get_info", gdr_internal_get_info);
   LOAD_SYM(gdrhandle, "gdr_map", gdr_internal_map);
@@ -91,6 +93,7 @@ teardown:
   gdr_internal_open = NULL;
   gdr_internal_close = NULL;
   gdr_internal_pin_buffer = NULL;
+  gdr_internal_pin_buffer_v2 = NULL;
   gdr_internal_unpin_buffer = NULL;
   gdr_internal_get_info = NULL;
   gdr_internal_map = NULL;
@@ -141,6 +144,33 @@ ncclResult_t wrap_gdr_pin_buffer(gdr_t g, unsigned long addr, size_t size, uint6
   GDRLOCKCALL(gdr_internal_pin_buffer(g, addr, size, p2p_token, va_space, handle), ret);
   if (ret != 0) {
     WARN("gdr_pin_buffer(addr %lx, size %zu) failed: %d", addr, size, ret);
+    return ncclSystemError;
+  }
+  return ncclSuccess;
+}
+
+bool ncclGdrPinV2Available(void) {
+  static std::once_flag onceFlag;
+  static bool available = false;
+  std::call_once(onceFlag, []() {
+    if (wrap_gdr_symbols() != ncclSuccess) return;
+    if (gdr_internal_pin_buffer_v2 == NULL || gdr_internal_runtime_get_version == NULL) return;
+    int major, minor;
+    gdr_internal_runtime_get_version(&major, &minor);
+    available = (major > 2 || (major == 2 && minor >= 5));
+  });
+  return available;
+}
+
+ncclResult_t wrap_gdr_pin_buffer_v2(gdr_t g, unsigned long addr, size_t size, uint32_t flags, gdr_mh_t *handle) {
+  if (!ncclGdrPinV2Available()) {
+    WARN("gdr_pin_buffer_v2 not available; GDRCopy >= 2.5 required");
+    return ncclInternalError;
+  }
+  int ret;
+  GDRLOCKCALL(gdr_internal_pin_buffer_v2(g, addr, size, flags, handle), ret);
+  if (ret != 0) {
+    WARN("gdr_pin_buffer_v2(addr %lx, size %zu, flags %u) failed: %d", addr, size, flags, ret);
     return ncclSystemError;
   }
   return ncclSuccess;

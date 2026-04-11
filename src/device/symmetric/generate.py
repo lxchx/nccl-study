@@ -58,6 +58,7 @@ reductions = ["AllReduce","ReduceScatter"]
 all_reds = ["sum", "avg"]
 all_tys = ["f32","f16","bf16","f8e4m3","f8e5m2"]
 gin_algos = ["RailA2A_LsaLD", "RailA2A_LsaLDMC", "RailRing_LsaSTMC"]
+tma_algos = ["TmaST", "TmaSTMC", "TmaLD", "RSxTmaLD_AGxTmaST"]
 
 nvls_algos_by_coll = {
   "AllReduce": ["AGxLLMC_R","RSxLDMC_AGxSTMC"],
@@ -96,19 +97,23 @@ ty_to_cxxtype = {
 }
 
 def enumerate_kernels():
-  for algo in ["LL","LLMC","ST","STMC","RailRing_LsaSTMC"]:
+  for algo in ["LL","LLMC","ST","STMC","TmaST","TmaSTMC","RailRing_LsaSTMC"]:
     yield Rec(coll="AllGather", algo=algo)
   for red in all_reds:
     for ty in all_tys:
-      for algo in ["AGxLL_R","AGxLLMC_R","RSxLD_AGxST","RSxLDMC_AGxSTMC"]:
+      for algo in ["AGxLL_R","AGxLLMC_R","RSxLD_AGxST","RSxLDMC_AGxSTMC","RSxTmaLD_AGxTmaST"]:
         if red == "avg":
           continue
         yield Rec(coll="AllReduce", algo=algo, red=red, ty=ty)
-      for algo in ["LL","LD","LDMC","RailA2A_LsaLD","RailA2A_LsaLDMC"]:
+      for algo in ["LL","LD","LDMC","TmaLD","RailA2A_LsaLD","RailA2A_LsaLDMC"]:
         yield Rec(coll="ReduceScatter", algo=algo, red=red, ty=ty)
 
 def required_cuda(k):
   cudart, arch, specific_sms  = 0, 600, None
+  is_tma = k.algo in tma_algos
+  if is_tma:
+    cudart = max(cudart, 12000)
+    arch = 900
   is_nvls = k.algo in nvls_algos_by_coll.get(k.coll, [])
   if is_nvls:
     cudart = max(cudart, 12010)

@@ -173,21 +173,17 @@ inspectorResult_t inspectorPluginCollInfoRef(struct inspectorCollInfo *collInfo)
   return inspectorSuccess;
 }
 
-inspectorResult_t inspectorPluginCollInfoRefSafe(struct inspectorCollInfo *collInfo) {
-  inspectorLockWr(&collInfo->guard);
-  inspectorPluginCollInfoRef(collInfo);
-  inspectorUnlockRWLock(&collInfo->guard);
-  return inspectorSuccess;
-}
-
 inspectorResult_t inspectorPluginCollInfoDeRef(struct inspectorCollInfo *collInfo) {
   collInfo->refCount -= 1;
   if (collInfo->refCount == 0) {
-    inspectorLockDestroy(&collInfo->guard);
-    inspectorEventPoolReleaseColl(collInfo);
     return inspectorReturn;
   }
   return inspectorSuccess;
+}
+
+static void inspectorPluginCollInfoCleanup(struct inspectorCollInfo *collInfo) {
+  inspectorLockDestroy(&collInfo->guard);
+  inspectorEventPoolReleaseColl(collInfo);
 }
 
 static void inspectorUpdateCommOpInfo(struct inspectorCommInfo *commInfo,
@@ -213,18 +209,14 @@ inspectorResult_t inspectorPluginP2pInfoRef(struct inspectorP2pInfo *p2pInfo) {
 inspectorResult_t inspectorPluginP2pInfoDeRef(struct inspectorP2pInfo *p2pInfo) {
   p2pInfo->refCount -= 1;
   if (p2pInfo->refCount == 0) {
-    inspectorLockDestroy(&p2pInfo->guard);
-    inspectorEventPoolReleaseP2p(p2pInfo);
     return inspectorReturn;
   }
   return inspectorSuccess;
 }
 
-inspectorResult_t inspectorPluginCollInfoDeRefSafe(struct inspectorCollInfo *collInfo) {
-  inspectorLockWr(&collInfo->guard);
-  inspectorResult_t res = inspectorPluginCollInfoDeRef(collInfo);
-  inspectorUnlockRWLock(&collInfo->guard);
-  return res;
+static void inspectorPluginP2pInfoCleanup(struct inspectorP2pInfo *p2pInfo) {
+  inspectorLockDestroy(&p2pInfo->guard);
+  inspectorEventPoolReleaseP2p(p2pInfo);
 }
 
 /*
@@ -523,10 +515,10 @@ static ncclResult_t inspectorPluginStopEventColl(struct inspectorCollInfo *collI
                             NCCL_INSP_EVT_TRK_OP_STOP,
                             collInfo);
   inspectorResult_t res = inspectorPluginCollInfoDeRef(collInfo);
-  if (res == inspectorReturn) {
-    return ncclSuccess;
-  }
   inspectorUnlockRWLock(&collInfo->guard);
+  if (res == inspectorReturn) {
+    inspectorPluginCollInfoCleanup(collInfo);
+  }
   return ncclSuccess;
 }
 
@@ -536,16 +528,18 @@ static ncclResult_t inspectorPluginStopEventP2p(struct inspectorP2pInfo *p2pInfo
                                NCCL_INSP_EVT_TRK_OP_STOP,
                                p2pInfo);
   inspectorResult_t res = inspectorPluginP2pInfoDeRef(p2pInfo);
-  if (res == inspectorReturn) {
-    return ncclSuccess;
-  }
   inspectorUnlockRWLock(&p2pInfo->guard);
+  if (res == inspectorReturn) {
+    inspectorPluginP2pInfoCleanup(p2pInfo);
+  }
   return ncclSuccess;
 }
 
 static ncclResult_t inspectorPluginStopEventKernelChColl(struct inspectorKernelChInfo *kernelChInfo,
                                                          struct inspectorCollInfo *collInfo) {
   struct inspectorCompletedOpInfo completedOp;
+  bool needsCleanup = false;
+  bool doCommUpdate = false;
 
   inspectorLockWr(&collInfo->guard);
   struct inspectorCommInfo *commInfo = collInfo->commInfo;
@@ -559,7 +553,8 @@ static ncclResult_t inspectorPluginStopEventKernelChColl(struct inspectorKernelC
 
   inspectorResult_t res = inspectorPluginCollInfoDeRef(collInfo);
   if (res == inspectorReturn) {
-    return ncclSuccess;
+    needsCleanup = true;
+    goto done;
   }
 
   if ((collInfo->nKernelChCompleted == collInfo->nKernelChStarted)
@@ -572,28 +567,35 @@ static ncclResult_t inspectorPluginStopEventKernelChColl(struct inspectorKernelC
     if (requireKernelTiming &&
         completedOp.timingSource != inspectorTimingSourceKernelGpu) {
       res = inspectorPluginCollInfoDeRef(collInfo);
-      if (res != inspectorReturn) {
-        inspectorUnlockRWLock(&collInfo->guard);
+      if (res == inspectorReturn) {
+        needsCleanup = true;
       }
-      return ncclSuccess;
+      goto done;
     }
 
     res = inspectorPluginCollInfoDeRef(collInfo);
-    if (res != inspectorReturn) {
-      inspectorUnlockRWLock(&collInfo->guard);
+    if (res == inspectorReturn) {
+      needsCleanup = true;
     }
-    if (commInfo != nullptr) {
-      inspectorUpdateCommOpInfo(commInfo, &completedOp);
-    }
-    return ncclSuccess;
+    doCommUpdate = (commInfo != nullptr);
   }
+
+done:
   inspectorUnlockRWLock(&collInfo->guard);
+  if (needsCleanup) {
+    inspectorPluginCollInfoCleanup(collInfo);
+  }
+  if (doCommUpdate) {
+    inspectorUpdateCommOpInfo(commInfo, &completedOp);
+  }
   return ncclSuccess;
 }
 
 static ncclResult_t inspectorPluginStopEventKernelChP2p(struct inspectorKernelChInfo *kernelChInfo,
                                                         struct inspectorP2pInfo *p2pInfo) {
   struct inspectorCompletedOpInfo completedOp;
+  bool needsCleanup = false;
+  bool doCommUpdate = false;
 
   inspectorLockWr(&p2pInfo->guard);
   struct inspectorCommInfo *commInfo = p2pInfo->commInfo;
@@ -607,7 +609,8 @@ static ncclResult_t inspectorPluginStopEventKernelChP2p(struct inspectorKernelCh
 
   inspectorResult_t res = inspectorPluginP2pInfoDeRef(p2pInfo);
   if (res == inspectorReturn) {
-    return ncclSuccess;
+    needsCleanup = true;
+    goto done;
   }
 
   if ((p2pInfo->nKernelChCompleted == p2pInfo->nKernelChStarted)
@@ -620,22 +623,27 @@ static ncclResult_t inspectorPluginStopEventKernelChP2p(struct inspectorKernelCh
     if (requireKernelTiming &&
         completedOp.timingSource != inspectorTimingSourceKernelGpu) {
       res = inspectorPluginP2pInfoDeRef(p2pInfo);
-      if (res != inspectorReturn) {
-        inspectorUnlockRWLock(&p2pInfo->guard);
+      if (res == inspectorReturn) {
+        needsCleanup = true;
       }
-      return ncclSuccess;
+      goto done;
     }
 
     res = inspectorPluginP2pInfoDeRef(p2pInfo);
-    if (res != inspectorReturn) {
-      inspectorUnlockRWLock(&p2pInfo->guard);
+    if (res == inspectorReturn) {
+      needsCleanup = true;
     }
-    if (commInfo != nullptr) {
-      inspectorUpdateCommOpInfo(commInfo, &completedOp);
-    }
-    return ncclSuccess;
+    doCommUpdate = (commInfo != nullptr);
   }
+
+done:
   inspectorUnlockRWLock(&p2pInfo->guard);
+  if (needsCleanup) {
+    inspectorPluginP2pInfoCleanup(p2pInfo);
+  }
+  if (doCommUpdate) {
+    inspectorUpdateCommOpInfo(commInfo, &completedOp);
+  }
   return ncclSuccess;
 }
 
@@ -653,6 +661,7 @@ static ncclResult_t inspectorPluginStopEventKernelCh(struct inspectorKernelChInf
 static ncclResult_t inspectorPluginRecordEventStateKernelChColl(struct inspectorKernelChInfo *kernelChInfo,
                                                                 struct inspectorCollInfo *collInfo,
                                                                 ncclProfilerEventStateArgs_t* eStateArgs) {
+  bool needsCleanup = false;
   inspectorLockWr(&collInfo->guard);
   struct inspectorEventTraceInfo *krnlEvtTrk
     = collInfo->collEvtTrk.kernelCh[kernelChInfo->channelId].evntTrace;
@@ -663,16 +672,20 @@ static ncclResult_t inspectorPluginRecordEventStateKernelChColl(struct inspector
   if (kernelChInfo->startGpuClk != 0) {
     inspectorResult_t res = inspectorPluginCollInfoDeRef(collInfo);
     if (res == inspectorReturn) {
-      return ncclSuccess;
+      needsCleanup = true;
     }
   }
   inspectorUnlockRWLock(&collInfo->guard);
+  if (needsCleanup) {
+    inspectorPluginCollInfoCleanup(collInfo);
+  }
   return ncclSuccess;
 }
 
 static ncclResult_t inspectorPluginRecordEventStateKernelChP2p(struct inspectorKernelChInfo *kernelChInfo,
                                                                struct inspectorP2pInfo *p2pInfo,
                                                                ncclProfilerEventStateArgs_t* eStateArgs) {
+  bool needsCleanup = false;
   inspectorLockWr(&p2pInfo->guard);
   struct inspectorEventTraceInfo *krnlEvtTrk
     = p2pInfo->p2pEvtTrk.kernelCh[kernelChInfo->channelId].evntTrace;
@@ -683,10 +696,13 @@ static ncclResult_t inspectorPluginRecordEventStateKernelChP2p(struct inspectorK
   if (kernelChInfo->startGpuClk != 0) {
     inspectorResult_t res = inspectorPluginP2pInfoDeRef(p2pInfo);
     if (res == inspectorReturn) {
-      return ncclSuccess;
+      needsCleanup = true;
     }
   }
   inspectorUnlockRWLock(&p2pInfo->guard);
+  if (needsCleanup) {
+    inspectorPluginP2pInfoCleanup(p2pInfo);
+  }
   return ncclSuccess;
 }
 

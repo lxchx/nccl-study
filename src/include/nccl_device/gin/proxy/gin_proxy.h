@@ -19,6 +19,13 @@
 #include "../gin_device_host_common.h"
 #include "gin_proxy_device_host_common.h"
 
+struct ncclGinCpuProxyRequest {
+  int peer;
+  uint32_t nextGfdIdx;
+};
+static_assert(sizeof(ncclGinCpuProxyRequest) <= sizeof(ncclGinRequest_t),
+              "ncclGinCpuProxyRequest must fit in ncclGinRequest_t");
+
 namespace nccl {
 namespace gin {
 namespace proxy {
@@ -26,23 +33,29 @@ namespace proxy {
 // Chunk size for Gin Proxy GFD operations
 static constexpr size_t DataChunkSize = 1ULL << 30;  // 1 GB
 
-NCCL_DEVICE_INLINE void flush(ncclGinProxyGpuCtx_t* proxyCtx, uint32_t pe, cuda::memory_order ord, uint32_t* abortFlag) {
+NCCL_DEVICE_INLINE void waitForGfdComplete(ncclGinProxyGpuCtx_t* proxyCtx, uint32_t pe, uint32_t nextGfdIdx, cuda::memory_order ord, uint32_t* abortFlag) {
   using nccl::utility::loadConst;
   using nccl::utility::rollingLessEq;
   using nccl::utility::testAbort;
-  cuda::atomic_ref<uint32_t, cuda::thread_scope_system> pi(loadConst(&proxyCtx->pis)[pe]);
   cuda::atomic_ref<uint32_t, cuda::thread_scope_system> ci(loadConst(&proxyCtx->cis)[pe]);
   uint32_t steps = 0;
   // The PI and CI can keep moving because of concurrent threads posting GFDs to this queue, and the CPU consuming them.
   // Therefore, to prevent overflow issues in the while statement, we need to use a special comparison function.
-  uint32_t p = pi.load(cuda::memory_order_relaxed);
 #pragma unroll 1
-  while (!rollingLessEq<uint32_t>(p, ci.load(ord)) && !testAbort(abortFlag, steps)) continue;
+  while (!rollingLessEq<uint32_t>(nextGfdIdx, ci.load(ord)) && !testAbort(abortFlag, steps)) continue;
+}
+
+NCCL_DEVICE_INLINE void flush(ncclGinProxyGpuCtx_t* proxyCtx, uint32_t pe, cuda::memory_order ord, uint32_t* abortFlag) {
+  using nccl::utility::loadConst;
+  cuda::atomic_ref<uint32_t, cuda::thread_scope_system> pi(loadConst(&proxyCtx->pis)[pe]);
+  cuda::atomic_ref<uint32_t, cuda::thread_scope_system> ci(loadConst(&proxyCtx->cis)[pe]);
+  uint32_t p = pi.load(cuda::memory_order_relaxed);
+  nccl::gin::proxy::waitForGfdComplete(proxyCtx, pe, p, ord, abortFlag);
 }
 
 template <typename Coop>
 NCCL_DEVICE_INLINE void postGfd(Coop coop, ncclGinProxyGpuCtx_t* proxyCtx, ncclGinProxyGfd_t* gfd,
-                                uint32_t pe) {
+                                uint32_t pe, uint32_t* gfdIdx = nullptr) {
   using nccl::utility::loadConst;
   cuda::atomic_ref<uint32_t, cuda::thread_scope_system> pi(loadConst(&proxyCtx->pis)[pe]);
   cuda::atomic_ref<uint32_t, cuda::thread_scope_system> ci(loadConst(&proxyCtx->cis)[pe]);
@@ -51,6 +64,9 @@ NCCL_DEVICE_INLINE void postGfd(Coop coop, ncclGinProxyGpuCtx_t* proxyCtx, ncclG
   if (coop.thread_rank() == 0) {
     // claim a slot in the gfd queue
     uint32_t idx = pi.fetch_add(1, cuda::memory_order_relaxed);
+    if (gfdIdx != nullptr) {
+      *gfdIdx = idx;
+    }
     // wait for credits
     while (queueSize <= idx - ci.load(cuda::memory_order_relaxed)) {
     }
@@ -249,6 +265,38 @@ struct ncclGinApi_Get<NCCL_NET_DEVICE_GIN_PROXY> {
   }
 };
 
+template<>
+struct ncclGinApi_FlushAsync<NCCL_NET_DEVICE_GIN_PROXY> {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest, uint32_t optFlags) {
+    using nccl::utility::loadConst;
+    ncclGinCpuProxyRequest* req = reinterpret_cast<ncclGinCpuProxyRequest*>(outRequest);
+    req->peer = peer;
+    ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_system> pi(loadConst(&proxyCtx->pis)[peer]);
+    req->nextGfdIdx = pi.load(cuda::memory_order_relaxed);
+  }
+};
+template <>
+struct ncclGinApi_Wait<NCCL_NET_DEVICE_GIN_PROXY> {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, ncclGinRequest_t& request, bool hasDescriptor,
+                                      ncclGinDescriptorSmem* descriptor, cuda::memory_order ord, uint32_t* abortFlag) {
+    ncclGinCpuProxyRequest& req = reinterpret_cast<ncclGinCpuProxyRequest&>(request);
+    ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
+    nccl::gin::proxy::waitForGfdComplete(proxyCtx, req.peer, req.nextGfdIdx, cuda::memory_order_relaxed, abortFlag);
+
+    // Ensure gets are visible by issuing a local flush
+    ncclGinProxyGfd_t tmpGfd;
+    ncclGinProxyGfd_t* desc = hasDescriptor ? (ncclGinProxyGfd_t*)descriptor : &tmpGfd;
+    ncclGinProxyOp_t op;
+    uint32_t flushGfdIdx;
+    nccl::gin::proxy::constructProxyOp(op, /*isGet*/false, /*isFlush*/true, /*hasInline*/false, NCCL_GIN_SIGNAL_TYPE_NONE, ncclGinSignalInc, /*hasCounter*/false);
+    nccl::gin::proxy::buildGfd(desc, op, /*srcVal*/0, /*hasInline*/false, 0, nullptr,
+                               0, nullptr, 0, 0, 0, 0, nullptr, 0);
+    nccl::gin::proxy::postGfd(ncclCoopThread(), proxyCtx, desc, ctx.rank, &flushGfdIdx);
+    nccl::gin::proxy::waitForGfdComplete(proxyCtx, ctx.rank, flushGfdIdx + 1, ord, abortFlag);
+  }
+};
+
 template <>
 struct ncclGinApi_GetCounterPtr<NCCL_NET_DEVICE_GIN_PROXY> {
   NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
@@ -309,9 +357,7 @@ struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_PROXY> {
     nccl::gin::proxy::postGfd<Coop>(coop, proxyCtx, &gfd, /*peer*/ctx.rank);
 
     // wait for the flush operation to be completed
-    for (int pe = coop.thread_rank(); pe < ctx.nRanks; pe += coop.size()) {
-      nccl::gin::proxy::flush(proxyCtx, pe, ord, abortFlag);
-    }
+    nccl::gin::proxy::flush(proxyCtx, ctx.rank, ord, abortFlag);
   }
 };
 

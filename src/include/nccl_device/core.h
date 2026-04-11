@@ -29,6 +29,10 @@ typedef ncclDevResourceHandle ncclDevResourceHandle_t;
 typedef uint32_t ncclGinSignal_t;
 typedef uint32_t ncclGinCounter_t;
 
+typedef struct alignas(uint64_t) {
+  char opaque[16];
+} ncclGinRequest_t;
+
 struct ncclLsaBarrierHandle;
 typedef struct ncclLsaBarrierHandle ncclLsaBarrierHandle_t;
 

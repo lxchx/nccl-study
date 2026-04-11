@@ -1974,7 +1974,7 @@ static ncclResult_t topoGetAlgoInfo(
     if (protoEnv) {
       snprintf(ncclProtoEnvStr, 1023, " NCCL_PROTO was set to %s.", protoEnv);
     }
-    WARN("Error : no algorithm/protocol available for function %s with datatype %s.%s%s", ncclFuncToString(info->func), ncclDatatypeToString(info->datatype), ncclAlgoEnvStr, ncclProtoEnvStr);
+    WARN("No algorithm/protocol available for function %s with datatype %s.%s%s", ncclFuncToString(info->func), ncclDatatypeToString(info->datatype), ncclAlgoEnvStr, ncclProtoEnvStr);
     return (algoEnv || protoEnv) ? ncclInvalidUsage : ncclInternalError;
   }
   if (simInfo) simInfo->estimatedTime = time;
@@ -2142,6 +2142,8 @@ static ncclResult_t calcCollChunking(
   int chunkSize = stepSize*chunkSteps;
   if (info->protocol == NCCL_PROTO_LL) chunkSize /= 2;
   if (info->protocol == NCCL_PROTO_LL128) chunkSize = (chunkSize / NCCL_LL128_LINEELEMS) * NCCL_LL128_DATAELEMS;
+  // Buffer-based ceiling; plugins may increase chunk size up to this limit.
+  int bufferMaxChunkSize = chunkSize;
 
   if (info->algorithm == NCCL_ALGO_COLLNET_DIRECT) {
     // Optimize chunkSize / nSteps
@@ -2199,6 +2201,18 @@ static ncclResult_t calcCollChunking(
     *outDirectFlags = NCCL_P2P_WRITE;
   } else {
     *outDirectFlags = 0;
+  }
+
+  if (comm->tuner != nullptr && comm->tuner->getChunkSize != nullptr) {
+    size_t tunerChunkSize = chunkSize;
+    NCCLCHECK(comm->tuner->getChunkSize(comm->tunerContext, info->func, nBytes,
+                                        info->algorithm, info->protocol, nChannels, &tunerChunkSize));
+    if (tunerChunkSize > (size_t)bufferMaxChunkSize) {
+      INFO(NCCL_TUNING, "%s: tuner chunk size %zu exceeds buffer max %d, clamping",
+           ncclFuncToString(info->func), tunerChunkSize, bufferMaxChunkSize);
+      tunerChunkSize = bufferMaxChunkSize;
+    }
+    chunkSize = (int)tunerChunkSize;
   }
 
   // Compute nSteps for proxies

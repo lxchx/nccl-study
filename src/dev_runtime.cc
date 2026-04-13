@@ -28,6 +28,7 @@
 NCCL_PARAM(WinStride, "WIN_STRIDE", -1);
 NCCL_PARAM(EnableVersionCheck, "ENABLE_VERSION_CHECK", 1);
 NCCL_PARAM(ElasticBufferRegister, "ELASTIC_BUFFER_REGISTER", 1);
+NCCL_PARAM(SymReuseSysmemHandles, "SYM_REUSE_SYSMEM_HANDLES", 0);
 
 extern struct ncclDevCommCompat ncclDevCommCompat_v22902, ncclDevCommCompat_v22907, ncclDevCommCompat_v23000;
 
@@ -277,12 +278,12 @@ fail:
 
 static ncclResult_t symMemoryImportAndMapSegmentHandle(
     struct ncclComm* comm, int r, CUdeviceptr addr, symLsaMessage* msg,
-    CUmemGenericAllocationHandle memHandle
+    CUmemGenericAllocationHandle memHandle, bool reuseLocal
   ) {
   ncclResult_t ret = ncclSuccess;
   struct ncclDevrState* devr = &comm->devrState;
   CUmemGenericAllocationHandle impHandle;
-  if (r == devr->lsaSelf) {
+  if (reuseLocal) {
     impHandle = memHandle;
   } else {
     if (ncclCuMemHandleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
@@ -296,7 +297,7 @@ static ncclResult_t symMemoryImportAndMapSegmentHandle(
   }
   CUCHECKGOTO(cuMemMap(addr, msg->segmentSize, 0, impHandle, 0), ret, fail);
   NCCLCHECKGOTO(symMemorySetAccessForVASegment(comm, msg, addr), ret, fail);
-  if (r != devr->lsaSelf) {
+  if (!reuseLocal) {
     CUCHECKGOTO(cuMemRelease(impHandle), ret, fail);
   }
 fail:
@@ -312,8 +313,10 @@ static ncclResult_t symMemoryImportAndMapSegmentsForRank(
   CUdeviceptr addr = reinterpret_cast<uintptr_t>((char*)devr->lsaFlatBase + r * devr->bigSize + bigOffset);
   for (int segment = 0; segment < numSegments; segment++) {
     symLsaMessage* msg = messages + r * maxSegments + segment;
-    CUmemGenericAllocationHandle handle = (r == devr->lsaSelf) ? memHandles[segment] : (CUmemGenericAllocationHandle) 0ULL;
-    NCCLCHECKGOTO(symMemoryImportAndMapSegmentHandle(comm, r, addr, msg, handle), ret, fail);
+    bool reuseLocal = (r == devr->lsaSelf) ||
+                      (ncclParamSymReuseSysmemHandles() && msg->type == CU_MEM_LOCATION_TYPE_HOST_NUMA);
+    CUmemGenericAllocationHandle handle = reuseLocal ? memHandles[segment] : (CUmemGenericAllocationHandle) 0ULL;
+    NCCLCHECKGOTO(symMemoryImportAndMapSegmentHandle(comm, r, addr, msg, handle, reuseLocal), ret, fail);
     addr += msg->segmentSize;
   }
 fail:

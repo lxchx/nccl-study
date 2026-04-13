@@ -440,14 +440,6 @@ struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_GDAKI> {
         doca_gpu_dev_verbs_wait(qps + peer);
       }
     }
-
-    // Ensure visibility of previous gets
-    for (int peer = coop.thread_rank(); peer < ctx.nRanks; peer += coop.size()) {
-      doca_gpu_dev_verbs_addr daddr;
-      daddr.addr = 0;
-      daddr.key = loadConst(&gdaki->sink_buffer_lkey);
-      doca_gpu_dev_verbs_get_wait<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU, DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO, DOCA_GPUNETIO_VERBS_MCST_ENABLED>(qps + peer, daddr);
-    }
   }
 };
 

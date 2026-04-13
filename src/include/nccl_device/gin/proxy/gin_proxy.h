@@ -347,17 +347,6 @@ struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_PROXY> {
     for (int pe = coop.thread_rank(); pe < ctx.nRanks; pe += coop.size()) {
       nccl::gin::proxy::flush(proxyCtx, pe, ord, abortFlag);
     }
-
-    // Send a flush operation. Must be after all GFDs are completed.
-    ncclGinProxyOp_t op;
-    nccl::gin::proxy::constructProxyOp(op, /*isGet*/false, /*isFlush*/true, /*hasInline*/false, NCCL_GIN_SIGNAL_TYPE_NONE, ncclGinSignalInc, /*hasCounter*/false);
-    ncclGinProxyGfd_t gfd;
-    nccl::gin::proxy::buildGfd(&gfd, op, /*srcVal*/0, /*hasInline*/false, 0, nullptr,
-                               0, nullptr, 0, 0, 0, 0, nullptr, 0);
-    nccl::gin::proxy::postGfd<Coop>(coop, proxyCtx, &gfd, /*peer*/ctx.rank);
-
-    // wait for the flush operation to be completed
-    nccl::gin::proxy::flush(proxyCtx, ctx.rank, ord, abortFlag);
   }
 };
 

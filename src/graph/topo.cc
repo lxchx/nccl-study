@@ -1450,7 +1450,7 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     INFO(NCCL_NET,"NET/%s : GPU Direct RDMA %s for HCA %d '%s'", netInfo->name, gdrSupport ? "Enabled" : "Disabled", n, props.name);
     NCCLCHECK(xmlInitAttrInt(netNode, "gdr", gdrSupport));
 
-    // Do not overwrite the "net" attribute and guarantees that a dev with net=1 will be unchanged
+    // GIN and COLL plugins must set "net=0"; it's absence is interpretted as "net=1" in ncclTopoAddNic.
     int isNet = 0;
     const char* netAttr = NULL;
     NCCLCHECK(xmlGetAttr(netNode, "net", &netAttr));
@@ -1468,6 +1468,30 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     INFO(NCCL_GRAPH, "ncclTopoPopulateNics : Filled %s in topo with pciPath=%s net=%s gin=%s keep=%s coll=%s", props.name, props.pciPath, netAttr, ginAttr, keepAttr, colAttr);
   }
 
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclTopoUpdateVNics(ncclXml* xml, struct ncclTopoNetInfo* net, int nPhysicalNics, int nVirtualNics) {
+  for (int n = nPhysicalNics; n < nPhysicalNics + nVirtualNics; n++) {
+    ncclNetProperties_t vProps;
+    NCCLCHECK(net->getProperties(n, &vProps));
+    for (int i = 0; i < vProps.vProps.ndevs; i++) {
+      ncclNetProperties_t physProps;
+      NCCLCHECK(net->getProperties(vProps.vProps.devs[i], &physProps));
+      struct ncclXmlNode* physNetNode = NULL;
+      NCCLCHECK(xmlFindTagKv(xml, "net", &physNetNode, "name", physProps.name));
+      if (physNetNode) {
+        NCCLCHECK(xmlSetAttrInt(physNetNode, net->net ? "net" : (net->gin ? "gin" : "coll"), 0));
+        // net is always present (see ncclTopoPopulateNics).
+        int net = 0, gin = 0, coll = 0;
+        NCCLCHECK(xmlGetAttrInt(physNetNode, "net", &net));
+        NCCLCHECK(xmlGetAttrIntDefault(physNetNode, "gin", &gin, 0));
+        NCCLCHECK(xmlGetAttrIntDefault(physNetNode, "coll", &coll, 0));
+        // Set "keep = 0" only if no plugin is using the physical device
+        if (net == 0 && gin == 0 && coll == 0) NCCLCHECK(xmlSetAttrInt(physNetNode, "keep", 0));
+      }
+    }
+  }
   return ncclSuccess;
 }
 
@@ -1491,19 +1515,8 @@ ncclResult_t ncclTopoProcessNet(ncclXml* xml, const char* dumpXmlFile, struct nc
     }
     // populate the virtual devices if any
     if (nVirtualNics > 0) {
-      // All fused devices are marked as keep = 0.
       // Note: ncclTopoMakeVnic doesn't create a vNic if ndevs = 1; no special case needed
-      for (int n = nPhysicalNics; n < nPhysicalNics + nVirtualNics; n++) {
-        ncclNetProperties_t vProps;
-        NCCLCHECK(net->getProperties(n, &vProps));
-        for (int i = 0; i < vProps.vProps.ndevs; i++) {
-          ncclNetProperties_t physProps;
-          NCCLCHECK(net->getProperties(vProps.vProps.devs[i], &physProps));
-          struct ncclXmlNode* physNetNode = NULL;
-          NCCLCHECK(xmlFindTagKv(xml, "net", &physNetNode, "name", physProps.name));
-          if (physNetNode) NCCLCHECK(xmlSetAttrInt(physNetNode, "keep", 0));
-        }
-      }
+      NCCLCHECK(ncclTopoUpdateVNics(xml, net, nPhysicalNics, nVirtualNics));
       // Populate the virtual devices and set keep = 1
       NCCLCHECK(ncclTopoPopulateNics(xml, nPhysicalNics, nPhysicalNics + nVirtualNics, net, /*virtual=*/true));
     }

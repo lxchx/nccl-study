@@ -964,7 +964,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     int p2pnChannelsPerPeer;
     int p2pMaxPeers;
     float minNetBw;
-    bool nicFused;
     int localNetDeviceCount;
     int localCollNetCount;
     bool isMultiRankGpu;
@@ -980,7 +979,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   int* pxnPeers = NULL;
   int *topParentLocalRanks = NULL;
   int p2pLevel = -1;
-  bool globalNicFused = false;
   bool globalGinSupport = comm->sharedRes->ginState.ginType != NCCL_GIN_TYPE_NONE;
   bool globalCrossNicSupport = true;
   bool globalRmaPluginSupport = true;
@@ -1231,7 +1229,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   allGather3Data[rank].p2pnChannelsPerPeer = comm->p2pnChannelsPerPeer;
   allGather3Data[rank].p2pMaxPeers = comm->p2pMaxPeers;
 
-  NCCLCHECKGOTO(ncclTopoCheckNicFused(comm, &allGather3Data[rank].nicFused), ret, fail);
   allGather3Data[rank].localNetDeviceCount = localNetDeviceCount;
   allGather3Data[rank].localCollNetCount = localCollNetCount;
   allGather3Data[rank].isMultiRankGpu = comm->isMultiRankGpu;
@@ -1265,9 +1262,6 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     if (comm->cpuVendor != allGather3Data[r].cpuVendor &&
         comm->cpuVendor != NCCL_TOPO_CPU_VENDOR_MIXED) {
       comm->cpuVendor = NCCL_TOPO_CPU_VENDOR_MIXED;
-    }
-    if (allGather3Data[r].nicFused) {
-      globalNicFused = true;
     }
     minLocalNetCount = std::min(minLocalNetCount, allGather3Data[r].localNetDeviceCount);
     maxLocalNetCount = std::max(maxLocalNetCount, allGather3Data[r].localNetDeviceCount);
@@ -1607,16 +1601,16 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   NCCLCHECKGOTO(ncclTopoPathAllDirectNVLink(comm->topo, &comm->isAllDirectNvlink), ret, fail);
   comm->globalGinSupport = NCCL_GIN_CONNECTION_NONE;
-  if (globalGinSupport && !globalNicFused && globalCuMemGdrSupport) {
+  if (globalGinSupport && globalCuMemGdrSupport) {
     comm->globalGinSupport = globalCrossNicSupport ? NCCL_GIN_CONNECTION_FULL : NCCL_GIN_CONNECTION_RAIL;
   }
-  comm->globalRmaProxySupport = globalRmaPluginSupport && globalCrossNicSupport && !globalNicFused && globalCuMemGdrSupport;
+  comm->globalRmaProxySupport = globalRmaPluginSupport && globalCrossNicSupport && globalCuMemGdrSupport;
   isOneLsaTeams = ncclDevrIsOneLsaTeam(comm);
   comm->symmetricSupport = comm->isAllCudaP2p && ncclParamWinEnable() && ncclCuMemEnable() && (comm->globalGinSupport != NCCL_GIN_CONNECTION_NONE || isOneLsaTeams);
   comm->hostRmaSupport = comm->symmetricSupport && (isOneLsaTeams || comm->globalRmaProxySupport);
   if (!comm->symmetricSupport) {
     INFO(NCCL_INIT, "Symmetric memory is not supported. cuMemEnable %d, "
-      "globalGinSupport %d, globalNicFused %d cuMemGdrSupport %d", ncclCuMemEnable(), comm->globalGinSupport, globalNicFused, globalCuMemGdrSupport);
+      "globalGinSupport %d, cuMemGdrSupport %d", ncclCuMemEnable(), comm->globalGinSupport, globalCuMemGdrSupport);
   }
 
   comm->ceColl.baseUCSymReadyPtr = NULL;

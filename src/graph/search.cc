@@ -1002,24 +1002,6 @@ ncclResult_t ncclTopoCheckCrossNicSupport(bool* supported) {
   return ncclSuccess;
 }
 
-ncclResult_t ncclTopoCheckNicFused(struct ncclComm* comm, bool* fused) {
-  int nDev = 0;
-  int devId = 0;
-  ncclNetProperties_t props;
-  *fused = false;
-  NCCLCHECK(comm->ncclNet->devices(&nDev));
-  while (devId < nDev) {
-    NCCLCHECK(comm->ncclNet->getProperties(devId, &props));
-    if (props.vProps.ndevs > 1) {
-      *fused = true;
-      goto exit;
-    }
-    devId++;
-  }
-exit:
-  return ncclSuccess;
-}
-
 ncclResult_t ncclTopoCompute(ncclTopoSystem* system, struct ncclTopoGraph* graph) {
   int ccMin;
   NCCLCHECK(ncclTopoGetCompCap(system, &ccMin, NULL));

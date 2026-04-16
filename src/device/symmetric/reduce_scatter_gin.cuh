@@ -68,7 +68,7 @@ static __device__ void rsAlgoHier(ncclSymkDevWorkArgs const* args, BoolTag<multi
 
   ncclLsaBarrierSession<ncclCoopCta> lsaBar
     {cta, handler.comm, ncclTeamTagLsa(), blockIdx.x, multimem};
-  lsaBar.sync(cta, cuda::memory_order_relaxed);
+  lsaBar.sync(cta, cuda::memory_order_acquire);
 
   int maxChunkElts = args->maxDynamicSmem/sizeof(AccT);
 

@@ -61,7 +61,7 @@ static __device__ __forceinline__ void allreduceDeep(
     }
   }
 
-  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_relaxed);
+  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_acquire);
 
   if (0 < nIters) {
     while (true) {
@@ -347,7 +347,7 @@ static __device__ void allreduce(
     }
   }
 
-  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_relaxed);
+  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_acquire);
 
   constexpr int UnrollPeers = 8;
   size_t nSufElts = (nBytes-cursor)/sizeof(T);
@@ -462,7 +462,7 @@ __device__ __forceinline__ void ncclSymkRun_AllReduce_RSxLDMC_AGxSTMC(ncclSymkDe
   int const& nRanks = handler.comm.nRanks;
   auto const& multimem = handler.comm.lsaMultimem;
 
-  bar.sync(ncclCoopCta(), cuda::memory_order_relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_acquire);
 
   handler.forEachWork<T>(
       [&]__device__(int block, int nBlocks, size_t nElts, size_t nAllElts,

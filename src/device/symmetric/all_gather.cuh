@@ -60,7 +60,7 @@ static __device__ void bcastDeep(
     }
   }
 
-  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_relaxed);
+  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_acquire);
 
   if (0 < nIters) {
     while (true) {
@@ -201,7 +201,7 @@ static __device__ void bcast(
     }
   }
 
-  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_relaxed);
+  if (waitNeeded) bar.wait(ncclCoopCta(), cuda::memory_order_acquire);
 
   constexpr int UnrollPeers = 8;
   size_t nSufElts = (nBytes-cursor)/sizeof(T);
@@ -251,7 +251,7 @@ __device__ __forceinline__ void ncclSymkRun_AllGather_STMC_impl(ncclSymkDevWorkA
   );
   int const& rank = handler.comm.rank;
 
-  bar.sync(ncclCoopCta(), cuda::memory_order_relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_acquire);
 
   handler.forEachWork<char>(
       [&]__device__(int block, int nBlocks, size_t nElts, size_t nAllElts,

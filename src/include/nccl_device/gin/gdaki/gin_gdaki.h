@@ -299,6 +299,7 @@ NCCL_DEVICE_INLINE static void getImpl(ncclGinCtx ctx, Coop coop, int peer,
 template <enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode, typename Coop>
 NCCL_DEVICE_INLINE static void flushImplMode(ncclGinCtx ctx, Coop coop, cuda::memory_order ord,
                                              uint32_t* abortFlag) {
+  (void)ord; // Ignore. DOCA already guarantees memory_order_acquire
   using nccl::utility::loadConst;
   using nccl::utility::testAbort;
 
@@ -324,15 +325,6 @@ NCCL_DEVICE_INLINE static void flushImplMode(ncclGinCtx ctx, Coop coop, cuda::me
     for (int peer = coop.thread_rank(); peer < ctx.nRanks; peer += coop.size()) {
       doca_gpu_dev_verbs_wait<resource_sharing_mode>(qps + peer);
     }
-  }
-
-  // Ensure visibility of previous gets
-  for (int peer = coop.thread_rank(); peer < ctx.nRanks; peer += coop.size()) {
-    doca_gpu_dev_verbs_addr daddr;
-    daddr.addr = 0;
-    daddr.key = loadConst(&gdaki->sink_buffer_lkey);
-    doca_gpu_dev_verbs_get_wait<resource_sharing_mode, DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO,
-                                DOCA_GPUNETIO_VERBS_MCST_ENABLED>(qps + peer, daddr);
   }
 }
 

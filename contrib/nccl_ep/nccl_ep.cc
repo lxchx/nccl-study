@@ -802,7 +802,13 @@ static ncclResult_t init_hybridep_internode(ncclEpGroup_t ep_group,
     NCCLCHECK(ncclCommSplit(ep_group->comm, color, key, &ep_group->gin_config.split_comm, nullptr));
 
     int qps_per_rank = ep_group->config.num_qp_per_rank;
-    if (qps_per_rank == 0) qps_per_rank = 24;
+    int min_required_ctx = HYBRIDEP_DISPATCH_NUM_OF_BLOCKS * HYBRIDEP_DISPATCH_N2N_WARPS;
+    if (qps_per_rank == 0) qps_per_rank = min_required_ctx;
+    if (qps_per_rank < min_required_ctx) {
+        fprintf(stderr, "[HT GIN] Error: num_qp_per_rank(%d) must be >= %d for dedicated N2N warp contexts\n",
+                qps_per_rank, min_required_ctx);
+        return ncclInvalidUsage;
+    }
     ep_group->gin_config.qps_per_rank = qps_per_rank;
     ep_group->gin_config.num_comms = 1;
     ep_group->gin_config.num_ctx_per_comm = qps_per_rank;
@@ -838,6 +844,7 @@ static ncclResult_t init_hybridep_internode(ncclEpGroup_t ep_group,
         reqs.ginSignalCount = ep_group->gin_config.num_total_signals;
         reqs.ginConnectionType = NCCL_GIN_CONNECTION_FULL;
         reqs.ginContextCount = ep_group->gin_config.num_ctx_per_comm;
+        reqs.ginQueueDepth = 3 * HT_OF_NUM_TOKENS_PER_CHUNK + 1;
         NCCLCHECK(ncclDevCommCreate(ep_group->gin_config.split_comm, &reqs, &ep_group->gin_config.dcomms[0]));
     }
 
@@ -1002,7 +1009,7 @@ ncclResult_t ncclEpCreateGroup(
     }
 
     if (ep_group->config.num_qp_per_rank == NCCL_EP_AUTO) {
-        ep_group->config.num_qp_per_rank = 24;
+        ep_group->config.num_qp_per_rank = HYBRIDEP_DISPATCH_NUM_OF_BLOCKS * HYBRIDEP_DISPATCH_N2N_WARPS;
     }
 
     // Physical node properties
@@ -1268,35 +1275,6 @@ struct ncclEpHandle {
 
     union {
         struct {
-            // Both intranode and internode
-            int* recv_counter;
-            int* recv_counter_device;
-            int* internal_recv_expert_counter_host = nullptr;
-            int received_token_count = -1;
-            ncclNDTensor_t rank_token_counts;
-            ncclNDTensor_t expert_token_counts;
-            ncclNDTensor_t token_rank_mask;
-            ncclNDTensor_t global_channel_prefix;
-            ncclNDTensor_t nvl_send_head;
-            ncclNDTensor_t recv_global_channel_prefix;
-
-            // Internode only
-            int* rdma_recv_counter;
-            int* rdma_recv_counter_device;
-            int rdma_received_token_count = -1;
-            std::optional<ncclNDTensor_t> rdma_rank_token_counts;
-            ncclNDTensor_t rdma_channel_prefix;
-            ncclNDTensor_t recv_rdma_rank_prefix;
-            ncclNDTensor_t recv_global_rank_prefix;
-            ncclNDTensor_t rdma_send_head;
-            ncclNDTensor_t recv_source_metadata;
-            ncclNDTensor_t recv_rdma_channel_prefix;
-
-            // Intranode only
-            ncclNDTensor_t inter_rank_token_offsets;
-            ncclNDTensor_t recv_token_source_map;
-        } ht;
-        struct {
             // packed tensors for LL
             ncclNDTensor_t expert_recv_source_indices;
             ncclNDTensor_t expert_dispatch_layout;
@@ -1441,10 +1419,8 @@ struct ncclEpHandle {
           cached_mode(false),
           num_scales(0),
           hidden_int4(0) {
-        // Zero the entire union (ht, ll, hybridep share memory)
-         // Use max size to ensure all members are zeroed
-         constexpr size_t union_size = std::max({sizeof(ht), sizeof(ll), sizeof(hybridep)});
-         memset(static_cast<void*>(&ht), 0, union_size);
+        constexpr size_t union_size = std::max(sizeof(ll), sizeof(hybridep));
+        memset(static_cast<void*>(&ll), 0, union_size);
     }
 
     ~ncclEpHandle() {

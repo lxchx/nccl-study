@@ -374,6 +374,10 @@ ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm, struct ncclCeCollArgs* 
         NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
       }
     }
+    // WORKAROUND: This is a workaround to ensure that there is always an even number of intra-batch synchronization operations.
+    if (params->intraBatchSync && ((params->numOps + comm->ceColl.intraBatchSyncFreq - 1) / comm->ceColl.intraBatchSyncFreq) % 2 == 0) {
+      NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+    }
   }
   //--------------No graph capture / not legacy stream--------------
   else {

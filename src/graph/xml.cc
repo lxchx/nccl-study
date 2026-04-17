@@ -591,7 +591,9 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
   if (path) {
     NCCLCHECKGOTO(ncclTopoSetAttrFromSys(pciNode, path, "class", "class"), ret, exit);
   }
-  if (ncclNvmlDeviceGetHandleByPciBusId(busId, &device) == ncclSuccess) {
+  ncclResult_t nvmlRet;
+  NOWARN(nvmlRet = ncclNvmlDeviceGetHandleByPciBusId(busId, &device), NCCL_GRAPH);
+  if (nvmlRet == ncclSuccess) {
     nvmlDeviceFound = true;
   }
   else {

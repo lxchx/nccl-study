@@ -267,7 +267,11 @@ struct ncclGinApi_Get<NCCL_NET_DEVICE_GIN_PROXY> {
 
 template<>
 struct ncclGinApi_FlushAsync<NCCL_NET_DEVICE_GIN_PROXY> {
-  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest, uint32_t optFlags) {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest,
+                                      bool hasDescriptor, ncclGinDescriptorSmem* descriptor,
+                                      uint32_t optFlags) {
+    (void)hasDescriptor;
+    (void)descriptor;
     using nccl::utility::loadConst;
     ncclGinCpuProxyRequest* req = reinterpret_cast<ncclGinCpuProxyRequest*>(outRequest);
     req->peer = peer;

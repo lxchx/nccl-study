@@ -836,13 +836,15 @@ NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::wait(ncclGinRequest_t& requ
 }
 
 template<unsigned beMask>
-template<typename Coop>
+template<typename Coop, typename DescriptorSmem>
 NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::flushAsync(ncclTeam team, uint32_t peer, ncclGinRequest_t* outRequest,
-                                                                Coop coop, uint32_t optFlags) const {
+                                                                Coop coop, uint32_t optFlags,
+                                                                DescriptorSmem descriptor) const {
   using nccl::gin::internal::teamRankToGinRank;
   coop.sync();
   if (coop.thread_rank() == 0) {
     ncclGinCall<ncclGinApi_FlushAsync>(this->_makeCtx(), teamRankToGinRank(this->comm, team, peer), outRequest,
+                                       ncclGin_isDescriptor(descriptor), ncclGin_getDescriptor(descriptor),
                                        optFlags);
   }
   coop.sync();

@@ -97,7 +97,9 @@ struct ncclGinApi_Wait {
 
 template <ncclNetDeviceType backend>
 struct ncclGinApi_FlushAsync {
-  NCCL_DEVICE_INLINE static void call(ncclGinCtx, uint32_t peer, ncclGinRequest_t* outRequest, uint32_t optFlags);
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx, uint32_t peer, ncclGinRequest_t* outRequest,
+                                      bool hasDescriptor, ncclGinDescriptorSmem* descriptor,
+                                      uint32_t optFlags);
 };
 
 template <ncclNetDeviceType backend>

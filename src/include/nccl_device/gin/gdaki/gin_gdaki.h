@@ -362,7 +362,11 @@ struct ncclGinApi_Get<NCCL_NET_DEVICE_GIN_GDAKI> {
 
 template <>
 struct ncclGinApi_FlushAsync<NCCL_NET_DEVICE_GIN_GDAKI> {
-  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest, uint32_t optFlags) {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, int peer, ncclGinRequest_t* outRequest,
+                                      bool hasDescriptor, ncclGinDescriptorSmem* descriptor,
+                                      uint32_t optFlags) {
+    (void)hasDescriptor;
+    (void)descriptor;
     using nccl::utility::loadConst;
     ncclGinGdakiRequest* req = reinterpret_cast<ncclGinGdakiRequest*>(outRequest);
     req->peer = peer;

@@ -690,10 +690,13 @@ NCCL_DEVICE_INLINE void ncclGinSignal(
 
 #if NCCL_CHECK_CUDACC
 template<unsigned beMask>
-template<typename Coop>
-NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::flush(Coop coop, cuda::memory_order ord) const {
+template<typename Coop, typename DescriptorSmem>
+NCCL_DEVICE_INLINE void ncclGin_BackendMask<beMask>::flush(Coop coop, cuda::memory_order ord,
+                                                           DescriptorSmem descriptor) const {
   coop.sync();
-  ncclGinCall<ncclGinApi_Flush>(this->_makeCtx(), coop, ord, this->comm.abortFlag);
+  ncclGinCall<ncclGinApi_Flush>(this->_makeCtx(), coop,
+                                ncclGin_isDescriptor(descriptor), ncclGin_getDescriptor(descriptor),
+                                ord, this->comm.abortFlag);
   coop.sync();
 }
 
@@ -704,7 +707,8 @@ NCCL_DEVICE_INLINE void ncclGinFlush(
   ) {
   coop.sync();
   ncclGinCtx ctx = ncclGin_C_makeCtx(net);
-  ncclGinCall<ncclGinApi_Flush>(ctx, coop, ord, net->comm.abortFlag);
+  ncclGinCall<ncclGinApi_Flush>(ctx, coop, /*hasDescriptor=*/false, /*descriptor=*/nullptr,
+                                ord, net->comm.abortFlag);
   coop.sync();
 }
 #endif

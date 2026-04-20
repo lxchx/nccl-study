@@ -344,7 +344,11 @@ struct ncclGinApi_ResetSignal<NCCL_NET_DEVICE_GIN_PROXY> {
 template <>
 struct ncclGinApi_Flush<NCCL_NET_DEVICE_GIN_PROXY> {
   template <typename Coop>
-  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, Coop coop, cuda::memory_order ord, uint32_t* abortFlag) {
+  NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, Coop coop,
+                                      bool hasDescriptor, ncclGinDescriptorSmem* descriptor,
+                                      cuda::memory_order ord, uint32_t* abortFlag) {
+    (void)hasDescriptor;
+    (void)descriptor;
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
     // wait for all GFDs to be completed
 #pragma unroll 1

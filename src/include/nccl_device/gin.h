@@ -324,8 +324,10 @@ struct ncclGin_BackendMask {
 
   // All source buffers from put's from any thread in this coop will be safe to reuse.
   // Flush does not guarantee that data has settled in remote memory.
-  template<typename Coop>
-  NCCL_DEVICE_INLINE void flush(Coop, cuda::memory_order ord = cuda::memory_order_acquire) const;
+  template<typename Coop, typename DescriptorSmem = ncclGin_None>
+  NCCL_DEVICE_INLINE void flush(Coop coop,
+                                cuda::memory_order ord = cuda::memory_order_acquire,
+                                DescriptorSmem descriptor = ncclGin_None{}) const;
 
   // Counter and signal wait use "rolling" comparison logic of a given bit-width
   // such that unsigned overflow does not disturb the property that: x < x+1.

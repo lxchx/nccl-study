@@ -144,14 +144,6 @@ endif()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/nccl_device.h ${CMAKE_BINARY_DIR}/include/nccl_device.h COPYONLY)
 
-# Copy param public headers to the build include directory
-file(GLOB SRC_PARAM_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include/param/*.h)
-foreach(HEADER_FILE ${SRC_PARAM_HEADERS})
-    get_filename_component(HEADER_NAME ${HEADER_FILE} NAME)
-    configure_file(${HEADER_FILE} ${CMAKE_BINARY_DIR}/include/param/${HEADER_NAME} COPYONLY)
-    list(APPEND PARAM_HEADERS ${CMAKE_BINARY_DIR}/include/param/${HEADER_NAME})
-endforeach()
-
 # Skip DOCA device headers for Windows platform; use on other platforms when set
 set(NCCL_HEADER_DEPS ${CMAKE_BINARY_DIR}/include/nccl.h ${CMAKE_BINARY_DIR}/include/nccl_device.h ${DEVICE_HEADERS}
     ${PARAM_HEADERS})

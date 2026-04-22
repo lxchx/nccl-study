@@ -1016,7 +1016,7 @@ ncclResult_t ncclTopoPathAllNVLink(struct ncclTopoSystem* system, int* allNvLink
 ncclResult_t ncclTopoPathAllDirectNVLink(struct ncclTopoSystem* system, bool* directNvlink) {
   int maxPath;
   NCCLCHECK(ncclTopoGetGpuMaxPath(system, GPU, &maxPath));
-  *directNvlink = maxPath == PATH_NVL;
+  *directNvlink = maxPath <= PATH_NVL;
   return ncclSuccess;
 }
 

@@ -16,18 +16,11 @@ from __future__ import annotations
 import threading
 
 from cuda.core import Buffer, Device, MemoryResource, Stream
+from cuda.core.typing import DevicePointerT
 
 from nccl import bindings as _nccl_bindings
 
 from nccl.core.cuda import CudaDeviceContext
-
-try:
-    from cuda.core import DevicePointerT
-except ImportError:
-    try:
-        from cuda.core._memory._buffer import DevicePointerT
-    except ImportError:
-        DevicePointerT = int
 
 
 __all__ = ["NcclMemoryResource", "get_memory_resource"]

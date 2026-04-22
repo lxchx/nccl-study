@@ -14,29 +14,11 @@ interfaces for NCCL operations with comprehensive type hints.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 import numpy as _np
 from cuda.core import Buffer, Device, Stream
-
-try:
-    from cuda.core import IsStreamT
-except ImportError:
-    try:
-        from cuda.core._stream import IsStreamT
-    except ImportError:
-        # ---- Fallback definition ----
-        @runtime_checkable
-        class IsStreamT(Protocol):
-            def __cuda_stream__(self) -> tuple[int, int]:
-                """
-                Fallback Protocol for CUDA stream objects.
-
-                Returns:
-                    (version: int, cudaStream_t address: int)
-                """
-                ...
-
+from cuda.core.typing import IsStreamT
 
 from nccl.bindings import (
     DataType,

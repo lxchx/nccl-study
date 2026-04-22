@@ -26,7 +26,7 @@ ncclGin
    .. cpp:function:: void put(ncclTeam team, int peer, ncclWindow_t dstWnd, size_t dstOffset, ncclWindow_t srcWnd, \
       size_t srcOffset, size_t bytes, \
       RemoteAction remoteAction, LocalAction localAction, Coop coop, DescriptorSmem descriptor, \
-                      cuda::thread_scope alreadyReleased, cuda::thread_scope expected_scope)
+                      cuda::thread_scope alreadyReleased, cuda::thread_scope expected_scope, SegmentType bufType)
 
       Schedules a device-initiated, one-sided data transfer operation from a local buffer to a remote buffer on a peer.
 
@@ -41,6 +41,8 @@ ncclGin
       ``ncclGin_Signal{Inc|Add}`` (for *remoteAction*) and ``ncclGin_CounterInc`` (for *localAction*); see
       :ref:`devapi_signals` below for more details.  *coop* indicates the set of threads participating in this operation (see
       :ref:`devapi_coops`); it defaults to ``ncclCoopThread`` (a single device thread), which is the recommended model.
+      *bufType* specifies the physical memory composition of the source and destination buffers (see
+      :ref:`devapi_segment_types`); it defaults to ``ncclGin_SegmentDevice``.
 
       The visibility of the signal on the destination peer implies the visibility of the put data it is attached to *and all
       the preceding puts to the same peer, provided that they were issued using the same GIN context*.

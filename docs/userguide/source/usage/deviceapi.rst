@@ -37,6 +37,12 @@ GIN has the following requirements:
 * Network topology: Requires full NIC connectivity. Does not support topologies where NICs cannot communicate across rails. Also does not support ``NCCL_CROSS_NIC=0``.
 * Fused NICs are not supported. To use GIN on dual-port NICs, set ``NCCL_IB_MERGE_NICS=0``
 
+When using host-backed buffers, the following additional limitations apply:
+
+* Host segments must be allocated with ``CU_MEM_LOCATION_TYPE_HOST_NUMA``.
+* DirectNIC is not supported.
+* LSA Multimem is not supported.
+* Host RMA APIs are not supported.
 
 Using the host RMA API requires CUDA 12.5 or greater.
 
@@ -219,6 +225,21 @@ API contains functions to verify team membership, convert rank numbers between t
 always contiguous (stride ``1``), whereas the rail team is typically not -- its stride equals the size of the LSA team
 (the assumption is thus that each rank *n* within the local LSA team has direct network connectivity with corresponding
 ranks *n* of all remote LSA teams).
+
+.. _devapi_segment_types:
+
+Segment Types
+-------------
+
+The ``SegmentType`` template parameter of :cpp:func:`ncclGin::put` describes the physical memory composition
+of the source and destination virtual addresses.  Three tag types are defined:
+
+* ``ncclGin_SegmentDevice`` (default) — the virtual addresses only contain cuMem segments of type ``CU_MEM_LOCATION_TYPE_DEVICE``.
+* ``ncclGin_SegmentHostNuma`` — the virtual addresses only contain cuMem segments of type ``CU_MEM_LOCATION_TYPE_HOST_NUMA``.
+* ``ncclGin_SegmentMixed`` — the virtual addresses contain a mix of ``CU_MEM_LOCATION_TYPE_DEVICE`` and ``CU_MEM_LOCATION_TYPE_HOST_NUMA`` segments.
+
+``ncclGin_SegmentHostNuma`` and ``ncclGin_SegmentMixed`` must be specified explicitly when the buffers contain
+host-backed memory; the default ``ncclGin_SegmentDevice`` is only valid for device-only memory.
 
 Host-Accessible Device Pointer Functions
 ----------------------------------------

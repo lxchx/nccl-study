@@ -76,4 +76,5 @@ ncclGetLsaMultimemPointer
 .. cpp:function:: void* ncclGetLsaMultimemPointer(ncclWindow_t w, size_t offset, ncclDevComm const& devComm)
 
    Returns a multicast memory pointer associated with the window *w* and device communicator *devComm*.  *offset*
-   is byte-based.  Availability of multicast memory is hardware-dependent.
+   is byte-based.  Availability of multicast memory is hardware-dependent. Currently unsupported for memory regions
+   that contain host-backed segments (CU_MEM_LOCATION_TYPE_HOST_NUMA).

@@ -612,7 +612,9 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
     INFO(NCCL_INIT, "ncclTopoGetXmlFromSys: Could not get device class for %s", busId);
   }
   if (isGpuDevice) {
-    if (ncclNvmlDeviceGetHandleByPciBusId(busId, &device) == ncclSuccess) {
+    ncclResult_t winNvmlRet;
+    NOWARN(winNvmlRet = ncclNvmlDeviceGetHandleByPciBusId(busId, &device), NCCL_GRAPH);
+    if (winNvmlRet == ncclSuccess) {
       nvmlDeviceFound = true;
     } else {
       INFO(NCCL_GRAPH, "Topology detection : could not find NVML device for GPU %s", busId);
@@ -808,14 +810,14 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
         }
       } else {
         // Failed to get parent - default to CPU root complex
+        INFO(NCCL_GRAPH, "ncclTopoGetXmlFromSys: could not get PCI parent for %s, defaulting to CPU root complex", busId);
         struct ncclXmlNode* topNode;
-        NCCLCHECK(xmlFindTag(xml, "system", &topNode));
-        NCCLCHECK(xmlGetSubKv(topNode, "cpu", &parent, "numaid", numaIdStr));
+        NCCLCHECKGOTO(xmlFindTag(xml, "system", &topNode), ret, exit);
+        NCCLCHECKGOTO(xmlGetSubKv(topNode, "cpu", &parent, "numaid", numaIdStr), ret, exit);
         if (parent == NULL) {
-          NCCLCHECK(xmlAddNode(xml, topNode, "cpu", &parent));
-          NCCLCHECK(xmlSetAttrLong(parent, "host_hash", getHostHash()));
-          NCCLCHECK(xmlSetAttr(parent, "numaid", numaIdStr));
-          // INFO(NCCL_INIT, "ncclTopoGetXmlFromSys: CPU node created (default)");
+          NCCLCHECKGOTO(xmlAddNode(xml, topNode, "cpu", &parent), ret, exit);
+          NCCLCHECKGOTO(xmlSetAttrLong(parent, "host_hash", getHostHash()), ret, exit);
+          NCCLCHECKGOTO(xmlSetAttr(parent, "numaid", numaIdStr), ret, exit);
         } else {
           INFO(NCCL_INIT, "ncclTopoGetXmlFromSys: CPU node already exists (default)");
         }
@@ -1021,6 +1023,7 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
         NCCLCHECK(xmlSetAttr(sub, "tclass", PCI_NVSWITCH_CLASS));
       } else {
         char deviceClass[MAX_STR_LEN];
+        deviceClass[0] = '\0';
         if (ncclOsGetPciDeviceClassByBusId(busId, deviceClass, sizeof(deviceClass)) == ncclSuccess && deviceClass[0] != '\0') {
           NCCLCHECK(xmlSetAttr(sub, "tclass", deviceClass));
           TRACE(NCCL_GRAPH, "Read NVLink target class: tclass=%s for busId=%s", deviceClass, busId);

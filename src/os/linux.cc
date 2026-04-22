@@ -651,7 +651,7 @@ ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass
   NOWARN(ncclOsGetPciPath(busId, &path), NCCL_GRAPH);
   if (path == NULL) {
     deviceClass[0] = '\0';
-    return ncclSuccess;
+    return ncclSystemError;
   }
   ncclResult_t ret = ncclOsTopoGetStrFromSys(path, "class", deviceClass, maxLen);
   free(path);

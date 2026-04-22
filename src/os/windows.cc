@@ -1243,18 +1243,14 @@ static bool getPcieMaxLinkSpeed(DEVINST devInst, char* strValue, int maxLen) {
 }
 
 ncclResult_t ncclOsTopoGetStrFromSys(const char* path, const char* fileName, char* strValue, int maxLen) {
-  if (path == NULL || fileName == NULL) {
-    strValue[0] = '\0';
-    return ncclSuccess;
-  }
-
   // Initialize to empty
   strValue[0] = '\0';
 
   // Open device info set to get device properties
   HDEVINFO deviceInfoSet = SetupDiGetClassDevs(NULL, "PCI", NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES);
   if (deviceInfoSet == INVALID_HANDLE_VALUE) {
-    return ncclSuccess; // Return empty on error
+    WARN("SetupDiGetClassDevs failed: %lu", GetLastError());
+    return ncclSystemError;
   }
 
   SP_DEVINFO_DATA deviceInfoData;
@@ -1274,8 +1270,9 @@ ncclResult_t ncclOsTopoGetStrFromSys(const char* path, const char* fileName, cha
   }
 
   if (!deviceFound) {
+    INFO(NCCL_GRAPH, "ncclOsTopoGetStrFromSys: device %s not found in SetupAPI enumeration", path);
     SetupDiDestroyDeviceInfoList(deviceInfoSet);
-    return ncclSuccess;
+    return ncclSystemError;
   }
 
   // Handle different property queries
@@ -1349,10 +1346,9 @@ ncclResult_t ncclOsTopoGetStrFromSys(const char* path, const char* fileName, cha
       if (CM_Get_Parent(&parentDevInst, deviceInfoData.DevInst, 0) == CR_SUCCESS) {
         targetDevInst = parentDevInst;
       } else {
-        // Parent not available, return empty
-        strValue[0] = '\0';
+        INFO(NCCL_GRAPH, "ncclOsTopoGetStrFromSys: could not get parent device for %s", path);
         SetupDiDestroyDeviceInfoList(deviceInfoSet);
-        return ncclSuccess;
+        return ncclSystemError;
       }
     }
 
@@ -1368,10 +1364,9 @@ ncclResult_t ncclOsTopoGetStrFromSys(const char* path, const char* fileName, cha
       if (CM_Get_Parent(&parentDevInst, deviceInfoData.DevInst, 0) == CR_SUCCESS) {
         targetDevInst = parentDevInst;
       } else {
-        // Parent not available, return empty
-        strValue[0] = '\0';
+        INFO(NCCL_GRAPH, "ncclOsTopoGetStrFromSys: could not get parent device for %s", path);
         SetupDiDestroyDeviceInfoList(deviceInfoSet);
-        return ncclSuccess;
+        return ncclSystemError;
       }
     }
 
@@ -1416,13 +1411,13 @@ ncclResult_t ncclOsGetNumaNodeAffinity(unsigned int numaId, char* affinityStr, s
 
 // Get device class by busId (works for any PCI device - GPUs, switches, bridges, etc.)
 ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass, size_t maxLen) {
-  
+
   // Parse the bus ID to extract bus, device, and function numbers
   DWORD bus, dev, func;
   if (!parsePciBusId(busId, &bus, &dev, &func)) {
     WARN("ncclOsGetPciDeviceClassByBusId: Failed to parse PCI bus ID: %s", busId);
     deviceClass[0] = '\0';
-    return ncclSuccess;
+    return ncclSystemError;
   }
 
   // Get device info using SetupAPI
@@ -1431,7 +1426,7 @@ ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass
   if (ret != ncclSuccess) {
     // Device not found, return empty class
     deviceClass[0] = '\0';
-    return ncclSuccess;
+    return ncclSystemError;
   }
 
   // Try to get class code from Configuration Manager registry.
@@ -1493,7 +1488,6 @@ ncclResult_t ncclOsGetPciDeviceClassByBusId(const char* busId, char* deviceClass
   } else {
     deviceClass[0] = '\0';
   }
-
   return ncclSuccess;
 }
 
@@ -1507,7 +1501,9 @@ ncclResult_t ncclOsGetPciDeviceClass(nvmlDevice_t device, char* deviceClass, siz
   }
 
   // Use the helper function with the busId
-  return ncclOsGetPciDeviceClassByBusId(pciInfo.busId, deviceClass, maxLen);
+  ncclResult_t classRet = ncclOsGetPciDeviceClassByBusId(pciInfo.busId, deviceClass, maxLen);
+  if (classRet != ncclSuccess) return classRet;
+  return ncclSuccess;
 }
 
 ncclResult_t ncclOsGetPciDeviceParent(nvmlDevice_t device, char** parentBusId) {

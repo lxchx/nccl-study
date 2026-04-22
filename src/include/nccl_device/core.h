@@ -29,8 +29,8 @@ typedef ncclDevResourceHandle ncclDevResourceHandle_t;
 typedef uint32_t ncclGinSignal_t;
 typedef uint32_t ncclGinCounter_t;
 
-typedef struct alignas(uint64_t) {
-  char opaque[16];
+typedef struct {
+  uint64_t opaque[2];
 } ncclGinRequest_t;
 
 struct ncclLsaBarrierHandle;
@@ -109,8 +109,8 @@ struct ncclDevCommRequirements {
     sizeof(ncclDevCommRequirements_t),           /* size */                    \
     NCCL_API_MAGIC,                              /* magic */                   \
     NCCL_VERSION_CODE,                           /* version */                 \
-    nullptr,                                     /* resourceRequirementsList*/ \
-    nullptr,                                     /* teamRequirementsList */    \
+    NULL,                                        /* resourceRequirementsList*/ \
+    NULL,                                        /* teamRequirementsList */    \
     false,                                       /* lsaMultimem */             \
     0,                                           /* barrierCount */            \
     0,                                           /* lsaBarrierCount */         \

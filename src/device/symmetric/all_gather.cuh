@@ -21,19 +21,32 @@ static __device__ void bcastDeep(
   int lane = t%WARP_SIZE;
   int const& rank = handler.comm.rank;
   int const& nRanks = handler.comm.nRanks;
-  constexpr size_t tileSize = UnrollPacks*WARP_SIZE*BytePerPack;
 
-  Pack* inpPacks = (Pack*)input.localPtr() + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
-  ncclSymPtr<Pack> outPacks = (ncclSymPtr<Pack>)output + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
+  Pack* inpPacks = (Pack*)input.localPtr() + intptr_t(w)*UnrollPacks*WARP_SIZE + (
+#if __CUDA_ARCH__ >= 1000
+      EnableTma ? 0 :
+#endif
+      lane);
+
+  ncclSymPtr<Pack> outPacks = (ncclSymPtr<Pack>)output + intptr_t(w)*UnrollPacks*WARP_SIZE + (
+#if __CUDA_ARCH__ >= 1000
+      EnableTma ? 0 :
+#endif
+      lane);
+
   Pack tmp[UnrollPacks];
 
+#if __CUDA_ARCH__ >= 1000
   int lw = threadIdx.x / WARP_SIZE;
   extern __shared__ char smemScratch[];
   using tmaSmemStruct_t = tmaSmemStruct<Pack, UnrollPacks>;
   constexpr int smemSizePerWarp = ncclTmaShmemScratchWarpSize();
   tmaSmemStruct_t* tmaSmem = reinterpret_cast<tmaSmemStruct_t*>(smemScratch+lw*smemSizePerWarp);
+  constexpr size_t tileSize = UnrollPacks*WARP_SIZE*BytePerPack;
+#endif
   bool skip = false; // all lanes issue loads/stores
 
+#if __CUDA_ARCH__ >= 1000
   if NCCL_IF_CONSTEXPR (EnableTma) {
     if (lane == 0) {
       // lane0 issues async.cp.bulk commands
@@ -43,16 +56,20 @@ static __device__ void bcastDeep(
       skip = true;
     }
   }
+#endif
 
   nIters -= w;
   if (0 < nIters) {
+#if __CUDA_ARCH__ >= 1000
     if NCCL_IF_CONSTEXPR (EnableTma) {
       if (lane == 0) {
         cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks, cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
         cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tileSize);
         tmaSmem->bar.wait(std::move(token));
       }
-    } else {
+    } else
+#endif
+    {
       #pragma unroll
       for (int u=0; u < UnrollPacks; u++) {
         tmp[u] = inpPacks[u*WARP_SIZE];
@@ -76,9 +93,12 @@ static __device__ void bcastDeep(
           #pragma unroll
           for (int ur=0; ur < UnrollPeers-partial; ur++) {
             if (partial && dr == nRanks) break;
+#if __CUDA_ARCH__ >= 1000
             if NCCL_IF_CONSTEXPR (EnableTma) {
               ptx::cp_async_bulk(ptx::space_global, ptx::space_shared, outPacks.lsaPtr(r), tmaSmem->buff[0], tileSize);
-            } else {
+            } else
+#endif
+            {
               #pragma unroll UnrollPacks
               for (int u=0; u < UnrollPacks; u++) {
                 outPacks.lsaPtr(r)[u*WARP_SIZE] = tmp[u];
@@ -86,25 +106,30 @@ static __device__ void bcastDeep(
             }
             if (++r == nRanks) r = 0;
           }
+#if __CUDA_ARCH__ >= 1000
           if NCCL_IF_CONSTEXPR (EnableTma) {
             if (lane == 0) {
               ptx::cp_async_bulk_commit_group();
               ptx::cp_async_bulk_wait_group_read(ptx::n32_t<0>());
             }
           }
+#endif
         }
       }
       inpPacks += intptr_t(wn)*UnrollPacks*WARP_SIZE;
       outPacks += intptr_t(wn)*UnrollPacks*WARP_SIZE;
       nIters -= wn;
       if (nIters <= 0) break;
+#if __CUDA_ARCH__ >= 1000
       if NCCL_IF_CONSTEXPR (EnableTma) {
         if (lane == 0) {
           cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks, cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
           cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tileSize);
           tmaSmem->bar.wait(std::move(token));
         }
-      } else {
+      } else
+#endif
+      {
         #pragma unroll
         for (int u=0; u < UnrollPacks; u++) {
           tmp[u] = inpPacks[u*WARP_SIZE];
@@ -158,13 +183,18 @@ static __device__ void bcast(
   uint32_t nBlocks_rcp32 = nccl::utility::idivRcp32_upto64(nBlocks);
 
   uint32_t alignment = uint32_t(input.offset - output.offset);
-  uint32_t nPreBytes = (EnableTma && alignment%256 == 0) ? (256 - input.offset)%256
-                                                         : (16 - input.offset)%16;
+  uint32_t nPreBytes =
+#if __CUDA_ARCH__ >= 1000
+    (EnableTma && alignment%256 == 0) ? (256 - input.offset)%256 :
+#endif
+    (16 - input.offset)%16;
+
   nPreBytes = min((size_t)nPreBytes, nBytes);
   uintptr_t cursor = nPreBytes;
 
   constexpr int MinWarpPerBlock = 4;
 
+#if __CUDA_ARCH__ >= 1000
   if NCCL_IF_CONSTEXPR (EnableTma) {
     if (alignment%256 == 0) {
       constexpr int BytePerPack = 16, UnrollPacks = 16, UnrollPeers = 2;
@@ -184,6 +214,7 @@ static __device__ void bcast(
       }
     }
   }
+#endif
 
   if (alignment%16 == 0) {
     constexpr int BytePerPack = 16, UnrollPacks = 4, UnrollPeers = 2;

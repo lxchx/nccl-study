@@ -26,32 +26,47 @@ static __device__ void reduceDeep(
   int const& rank = handler.comm.rank;
   int const& nRanks = handler.comm.nRanks;
   constexpr size_t tilePack = UnrollPacks*WARP_SIZE;
-  constexpr size_t tileSize = tilePack * BytePerPack;
-  size_t tmaSize = 0;
-  ncclSymPtr<Pack> inpPacks = (ncclSymPtr<Pack>)input + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
-  ncclSymPtr<Pack> outPacks = (ncclSymPtr<Pack>)output + intptr_t(w)*UnrollPacks*WARP_SIZE + (EnableTma ? 0 : lane);
+  ncclSymPtr<Pack> inpPacks = (ncclSymPtr<Pack>)input + intptr_t(w)*UnrollPacks*WARP_SIZE + (
+#if __CUDA_ARCH__ >= 1000
+      EnableTma ? 0 :
+#endif
+      lane);
+
+  ncclSymPtr<Pack> outPacks = (ncclSymPtr<Pack>)output + intptr_t(w)*UnrollPacks*WARP_SIZE + (
+#if __CUDA_ARCH__ >= 1000
+      EnableTma ? 0 :
+#endif
+      lane);
+
   Pack acc0[UnrollPacks];
 
+#if __CUDA_ARCH__ >= 1000
   int lw = threadIdx.x / WARP_SIZE;
   extern __shared__ char smemScratch[];
   using tmaSmemStruct_t = tmaSmemStruct<Pack, UnrollPacks, UnrollPeers>;
   constexpr int smemSizePerWarp = ncclTmaShmemScratchWarpSize();
   tmaSmemStruct_t* tmaSmem = reinterpret_cast<tmaSmemStruct_t*>(smemScratch+lw*smemSizePerWarp);
+  constexpr size_t tileSize = tilePack * BytePerPack;
+  size_t tmaSize = 0;
 
   if NCCL_IF_CONSTEXPR (EnableTma) {
     if (lane == 0) {
       init(&tmaSmem->bar, WARP_SIZE);
     }
   }
+#endif
 
   nIters -= w;
   if (0 < nIters) {
+#if __CUDA_ARCH__ >= 1000
     if NCCL_IF_CONSTEXPR (EnableTma) {
       if (lane == 0) {
         cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
         tmaSize += tileSize;
       }
-    } else {
+    } else
+#endif
+    {
       #pragma unroll
       for (int u=0; u < UnrollPacks; u++) {
         acc0[u] = inpPacks.peerPtr(world, rank)[u*WARP_SIZE];
@@ -67,6 +82,7 @@ static __device__ void reduceDeep(
       int r = rank+1;
       if (r == nRanks) r = 0;
       { Pack tmp1[UnrollPacks];
+#if __CUDA_ARCH__ >= 1000
         if NCCL_IF_CONSTEXPR (EnableTma) {
           if (lane == 0) {
             cuda::device::memcpy_async_tx(tmaSmem->buff[1], inpPacks.peerPtr(world, r), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
@@ -75,7 +91,9 @@ static __device__ void reduceDeep(
           cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tmaSize);
           tmaSmem->bar.wait(std::move(token));
           tmaSize = 0;
-        } else {
+        } else
+#endif
+        {
           #pragma unroll
           for (int u=0; u < UnrollPacks; u++) {
             tmp1[u] = inpPacks.peerPtr(world, r)[u*WARP_SIZE];
@@ -83,10 +101,12 @@ static __device__ void reduceDeep(
         }
         #pragma unroll
         for (int u=0; u < UnrollPacks; u++) {
+#if __CUDA_ARCH__ >= 1000
           if NCCL_IF_CONSTEXPR (EnableTma) {
             acc0[u] = tmaSmem->buff[0][lane+WARP_SIZE*u];
             tmp1[u] = tmaSmem->buff[1][lane+WARP_SIZE*u];
           }
+#endif
           acc1[u] = applyReduce(red, applyCast<T, Acc>(acc0[u]), applyCast<T, Acc>(tmp1[u]));
         }
       }
@@ -104,20 +124,25 @@ static __device__ void reduceDeep(
           if (partial && dr == nRanks) break;
 
           Pack tmp1[UnrollPeers][UnrollPacks];
+#if __CUDA_ARCH__ >= 1000
           if NCCL_IF_CONSTEXPR (EnableTma) {
             // lane0 waits for all threads to reduce tmp1 before next batch of TMA loads
             __syncwarp();
           }
+#endif
 
           #pragma unroll
           for (int ur=0; ur < UnrollPeers-partial; ur++) {
             if (partial && ur!=0 && dr+ur == nRanks) break;
+#if __CUDA_ARCH__ >= 1000
             if NCCL_IF_CONSTEXPR (EnableTma) {
               if (lane == 0) {
                 cuda::device::memcpy_async_tx(tmaSmem->buff[ur], inpPacks.peerPtr(world, r), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
                 tmaSize += tileSize;
               }
-            } else {
+            } else
+#endif
+            {
               #pragma unroll UnrollPacks
               for (int u=0; u < UnrollPacks; u++) {
                 tmp1[ur][u] = inpPacks.peerPtr(world, r)[u*WARP_SIZE];
@@ -126,19 +151,23 @@ static __device__ void reduceDeep(
             r += 1;
             if (r == nRanks) r = 0;
           }
+#if __CUDA_ARCH__ >= 1000
           if NCCL_IF_CONSTEXPR (EnableTma) {
             cuda::barrier<cuda::thread_scope_block>::arrival_token token = cuda::device::barrier_arrive_tx(tmaSmem->bar, 1, tmaSize);
             tmaSmem->bar.wait(std::move(token));
             tmaSize = 0;
           }
+#endif
           #pragma unroll
           for (int ur=0; ur < UnrollPeers-partial; ur++) {
             if (partial && ur!=0 && dr+ur == nRanks) break;
             #pragma unroll UnrollPacks
             for (int u=0; u < UnrollPacks; u++) {
+#if __CUDA_ARCH__ >= 1000
               if NCCL_IF_CONSTEXPR (EnableTma) {
                 tmp1[ur][u] = tmaSmem->buff[ur][lane+WARP_SIZE*u];
               }
+#endif
               acc1[u] = applyReduce(red, acc1[u], applyCast<T, Acc>(tmp1[ur][u]));
             }
           }
@@ -152,13 +181,16 @@ static __device__ void reduceDeep(
 
       #pragma unroll
       for (int u=0; u < UnrollPacks; u++) {
+#if __CUDA_ARCH__ >= 1000
         if NCCL_IF_CONSTEXPR (EnableTma) {
           tmaSmem->buff[0][lane+WARP_SIZE*u] = applyCast<Acc, T>(acc1[u]);
-        } else {
+        } else
+#endif
+        {
           acc0[u] = applyCast<Acc, T>(acc1[u]);
         }
       }
-
+#if __CUDA_ARCH__ >= 1000
       if NCCL_IF_CONSTEXPR (EnableTma) {
         // threads flush data to point of consistency for async proxy
         ptx::fence_proxy_async(ptx::space_shared);
@@ -172,7 +204,9 @@ static __device__ void reduceDeep(
 
         // threads wait for shared memory to be consumed by async proxy before reusing it
         __syncwarp();
-      } else {
+      } else
+#endif
+      {
         #pragma unroll UnrollPacks
         for (int u=0; u < UnrollPacks; u++) outPacks.localPtr()[u*WARP_SIZE] = acc0[u];
       }
@@ -182,12 +216,15 @@ static __device__ void reduceDeep(
       nIters -= wn;
       if (nIters <= 0) break;
 
+#if __CUDA_ARCH__ >= 1000
       if NCCL_IF_CONSTEXPR (EnableTma) {
         if (lane == 0) {
           cuda::device::memcpy_async_tx(tmaSmem->buff[0], inpPacks.peerPtr(world, rank), cuda::aligned_size_t<16>(tileSize), tmaSmem->bar);
           tmaSize += tileSize;
         }
-      } else {
+      } else
+#endif
+      {
         // Load data for next iteration.
         #pragma unroll
         for (int u=0; u < UnrollPacks; u++) {
@@ -277,7 +314,12 @@ static __device__ void reduce(
   constexpr int MinWarpPerBlock = 4;
 
   if (alignment%16 == 0) {
-    constexpr int BytePerPack = 16, UnrollPacks = EnableTma ? 8 : 4, UnrollPeers = 2;
+    constexpr int BytePerPack = 16, UnrollPacks =
+#if __CUDA_ARCH__ >= 1000
+      EnableTma ? 8 :
+#endif
+      4, UnrollPeers = 2;
+
     constexpr int BytePerChunk = MinWarpPerBlock*UnrollPacks*WARP_SIZE*BytePerPack;
     uint32_t chunks = (nBytes-cursor)/BytePerChunk;
     chunks -= imodFast32(chunks, nRanks*nBlocks, nRanks_nBlocks_rcp32);

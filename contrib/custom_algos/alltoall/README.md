@@ -97,35 +97,24 @@ steady state (CUDA graph, `skip_barrier=true` for poison).
 ### 8 × GB200
 
 | msg/pair | lsa_simple (µs) | lsa_poison (µs) | NCCL_baseline (µs) |
-|----------|-----------------|-----------------|--------------------|
-| 16 B     | 6.80            | 3.68            | 11.75              |
-| 128 B    | 6.48            | 3.97            | 12.08              |
-| 1 KB     | 6.69            | 4.07            | 12.27              |
-| 4 KB     | 7.01            | 4.56            | 13.10              |
+|----------|-----------------|-----------------|-------------------|
+| 16 B     | 6.80     | 3.68          | 11.75     |
+| 128 B    | 6.48     | 3.97          | 12.08     |
+| 1 KB     | 6.69     | 4.07          | 12.27     |
+| 4 KB     | 7.01     | 4.56          | 13.10     |
 
 ![AllToAll latency — 8 GB200 GPUs](alltoall_perf.png)
 
 ### 32 × GB200
 
 | msg/pair | lsa_simple (µs) | lsa_poison (µs) | NCCL_baseline (µs) |
-|----------|-----------------|-----------------|--------------------|
-| 16 B     | 9.38            | 4.66            | 28.20              |
-| 128 B    | 12.14           | 4.93            | 28.46              |
-| 1 KB     | 12.88           | 5.06            | 29.28              |
-| 4 KB     | 13.20           | 5.67            | 34.66              |
+|----------|-----------------|-----------------|-------------------|
+| 16 B     | 9.38     | 4.66          | 28.20     |
+| 128 B    | 12.14    | 4.93          | 28.46     |
+| 1 KB     | 12.88    | 5.06          | 29.28     |
+| 4 KB     | 13.20    | 5.67          | 34.66     |
 
 ![AllToAll latency — 32 GB200 GPUs](alltoall_perf_32gpu.png)
-
-### 64 × GB200
-
-| msg/pair | lsa_simple (µs) | lsa_poison (µs) | NCCL_baseline (µs) |
-|----------|-----------------|-----------------|--------------------|
-| 16 B     | 11.11           | 4.90            | 48.48              |
-| 128 B    | 12.05           | 5.39            | 49.75              |
-| 1 KB     | 12.48           | 5.52            | 50.23              |
-| 4 KB     | 13.29           | 6.97            | 60.33              |
-
-![AllToAll latency — 64 GB200 GPUs](alltoall_perf_64gpu.png)
 
 The poison kernel's latency is nearly flat across message sizes and rank
 counts, since it avoids any all-to-all synchronisation.

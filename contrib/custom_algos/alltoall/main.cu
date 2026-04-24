@@ -186,17 +186,11 @@ static float runTimed(bool useGraph, int nTimed,
 
 // ---------------------------------------------------------------------------
 // fill_buffer — initialise a flat int array with a uniform value.
+// Used to fill the shared LSA / UB input buffer (sendBuff) with myRank so
+// that every per-dest slab carries the sender's rank index.
 // ---------------------------------------------------------------------------
-__global__ void fill_buffer(int* buf, int val, long long n) {
-    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) buf[i] = val;
-}
-
-// fill_buffer_lsarank — same as fill_buffer but uses lsaTeam.rank as the
-// value, avoiding any host-side assumption about LSA rank == MPI rank.
-__global__ void fill_buffer_lsarank(int* buf, ncclDevComm devComm, long long n) {
-    int val = ncclTeamLsa(devComm).rank;
-    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void fill_buffer(int* buf, int val, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) buf[i] = val;
 }
 
@@ -206,7 +200,6 @@ __global__ void poison_sentinel_buffer(uint4* buf, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) buf[i].w = LSA_SENTINEL_POISON;
 }
-
 
 // ---------------------------------------------------------------------------
 // main
@@ -390,43 +383,6 @@ int main(int argc, char* argv[]) {
 
     int lsaSize = devComm.lsaSize;
 
-    // Require all ranks to be in a single NVLink island.
-    //
-    // lsaSize == 1: this GPU has no NVLink peers (IB-only or single GPU).
-    //   The LSA and sentinel kernels use ncclGetLsaPointer for direct NVLink
-    //   load/store; they cannot operate over InfiniBand or other non-NVLink
-    //   fabrics.  Exit with a clear error rather than hanging or producing
-    //   wrong results.
-    //
-    // lsaSize < nRanks: ranks span multiple NVLink islands (e.g. multi-node
-    //   with NVLink within each node but IB between nodes).  The kernels would
-    //   only exchange data within each island, not perform a true AllToAll
-    //   across all ranks.  Exit so the user is not misled by partial results.
-    if (lsaSize < nRanks) {
-        if (myRank == 0) {
-            if (lsaSize == 1)
-                fprintf(stderr,
-                    "\nERROR: LSA team size is 1 — no NVLink peers detected.\n"
-                    "  lsa_simple and lsa_poison kernels require direct NVLink\n"
-                    "  load/store (LSA) and cannot run over InfiniBand or other\n"
-                    "  non-NVLink fabrics.  Run on NVLink-connected GPUs.\n\n");
-            else
-                fprintf(stderr,
-                    "\nERROR: LSA team size (%d) < total ranks (%d).\n"
-                    "  Ranks span multiple NVLink islands.  lsa_simple and\n"
-                    "  lsa_poison kernels only exchange data within one island\n"
-                    "  and cannot perform a full AllToAll across all ranks.\n"
-                    "  Run with all ranks on GPUs within the same NVLink island.\n\n",
-                    lsaSize, nRanks);
-        }
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        NCCLCHECK(ncclDevCommDestroy(comm, &devComm));
-        NCCLCHECK(ncclCommFinalize(comm));
-        NCCLCHECK(ncclCommDestroy(comm));
-        MPICHECK(MPI_Finalize());
-        return 1;
-    }
-
     // Thread count is chosen dynamically per message size (see perf loop).
     // Ideal minimum: lsaSize warps (one per destination), but CUDA caps
     // blockDim.x at 1024 (32 warps).  When lsaSize > 32 each warp covers
@@ -444,20 +400,20 @@ int main(int argc, char* argv[]) {
     cudaStream_t stream;
     CUDACHECK(cudaStreamCreate(&stream));
 
-    // Fill sendBuff with LSA rank (as determined by the device).
-    // sendBuff[dest*count+i] = lsaRank for all dest/i.
-    // After AllToAll: recvBuff[r*count+i].x == r (the sender's LSA rank).
+    // Fill sendBuff with myRank — shared source buffer for LSA, NCCL, and poison.
+    // sendBuff[dest * count + i] = myRank for all dest/i,
+    // so after AllToAll: recvBuff[r * count + i] == r (correctness check holds).
     {
-        long long fillN = (long long)nRanks * PERF_MAX_COUNT;
-        fill_buffer_lsarank<<<(int)((fillN + 255) / 256), 256, 0, stream>>>(sendBuff, devComm, fillN);
+        int fillN = (int)((size_t)nRanks * PERF_MAX_COUNT);
+        fill_buffer<<<(fillN + 255) / 256, 256, 0, stream>>>(sendBuff, myRank, fillN);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
 
     // ------------------------------------------------------------------
     // 6. Correctness tests
     //
-    //    sendBuff is filled with MPI rank; the lsaRank->mpiRank map built
-    //    above gives the expected value for each recv slot.
+    //    sendBuff is filled with myRank (== lsaRank when all ranks share one
+    //    NVLink island), so after AllToAll recvBuff[r*count+i].x == r.
     //
     //    TEST_COUNT uint4 elements per rank-pair — large enough to exercise
     //    multi-element paths and catch off-by-one indexing bugs.

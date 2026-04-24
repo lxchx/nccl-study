@@ -770,6 +770,8 @@ break some functionality.
 
 They are fine to use for experiments, or to debug a problem, but should generally not be set for production code.
 
+.. _env_NCCL_P2P_DISABLE:
+
 NCCL_P2P_DISABLE
 ----------------
 

@@ -72,7 +72,7 @@
 #define WARMUP_ITERS     5
 
 // Correctness test: number of twoshot_mc_poison iterations.
-static const int TEST_ITERS = 10;
+static const int TEST_ITERS = 50;
 
 // Scale timed iterations with message size for stable but fast sweeps.
 static inline int timedIters(long nlines) {
@@ -349,160 +349,238 @@ int main(int argc, char* argv[]) {
     cudaStream_t stream;
     CUDACHECK(cudaStreamCreate(&stream));
 
-    // Fill sendBuff with 1.0f.  After any sum-allreduce, each output element
-    // should equal (float)nRanks.
+    // Fill sendBuff with a per-rank value: rank r uses (r+1) for all elements.
+    // Expected AllReduce sum = nRanks*(nRanks+1)/2, a non-trivial value that
+    // catches data-mix bugs (e.g. a rank reading its own buffer instead of
+    // peers', or one rank's contribution being dropped or double-counted).
     {
         int nFloats = (int)((size_t)PERF_MAX_NLINES * 4);
         fill_float<<<(nFloats + 255) / 256, 256, 0, stream>>>(
-            (float*)sendBuff, 1.0f, nFloats);
+            (float*)sendBuff, (float)(myRank + 1), nFloats);
     }
     CUDACHECK(cudaStreamSynchronize(stream));
 
     // ------------------------------------------------------------------
     // 6. Correctness tests
     //
-    //   TEST_NLINES = nRanks * 64 float4 elements satisfies the twoshot
-    //   constraint (nlines % nRanks == 0) for all nRanks, and is small
-    //   enough to complete near-instantly.  All tests use 1 CTA.
+    //   Tests run over three message sizes:
+    //     { nRanks, nRanks*64, nRanks*1024 } float4 lines
+    //   All are exact multiples of nRanks so twoshot and poison kernels
+    //   are always valid.
+    //
+    //   Tests run over up to two CTA counts: { 1, maxCtaCount }.
+    //   When maxCtaCount == 1 only the single-CTA path is tested.
+    //
+    //   twoshot_mc_poison is iterated TEST_ITERS times per case.  After
+    //   completion the following are verified for each rank locally:
+    //     (1) recvBuf: all four float components == EXPECTED everywhere.
+    //     (2) clearBuf.{x,y,z}: == EXPECTED everywhere (written by the
+    //         AllGather two iterations before this iteration, never
+    //         subsequently overwritten by re-poisoning, which only touches .w).
+    //     (3) clearBuf.w in myRank's ReduceScatter chunk: == LSA_POISON
+    //         (this rank re-poisoned its own chunk inline).
+    //     (4) clearBuf.w outside myRank's chunk: == EXPECTED (bit-exact),
+    //         confirming the AllGather result is intact and no spurious
+    //         poisoning occurred.
+    //
+    //   The pass flag is reduced across all MPI ranks (MPI_MIN) after each
+    //   sub-test so the final result reflects the global outcome.
     // ------------------------------------------------------------------
-    const int   TEST_NLINES = nRanks * 64;
-    const float EXPECTED    = (float)nRanks;
-    int pass = 1;
+    const float EXPECTED = (float)(nRanks * (nRanks + 1) / 2);
 
-    // ---- 6a. oneshot_mc ----
-    if (hasMC) {
-        CUDACHECK(cudaMemset(recvBuff, 0, (size_t)TEST_NLINES * sizeof(float4)));
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        oneshot_mc_allreduce_kernel<<<1, MC_AR_MAXTHREADS, 0, stream>>>(
-            recvBuff, sendWin, (size_t)TEST_NLINES, devComm);
-        CUDACHECK(cudaStreamSynchronize(stream));
+    const int testNlines[] = { nRanks, nRanks * 64, nRanks * 1024 };
+    const int nTestSizes   = (int)(sizeof(testNlines) / sizeof(testNlines[0]));
 
-        std::vector<float4> h(TEST_NLINES);
-        CUDACHECK(cudaMemcpy(h.data(), recvBuff,
-                             (size_t)TEST_NLINES * sizeof(float4),
-                             cudaMemcpyDeviceToHost));
-        for (int i = 0; i < TEST_NLINES && pass; i++) {
-            if (h[i].x != EXPECTED || h[i].y != EXPECTED ||
-                h[i].z != EXPECTED || h[i].w != EXPECTED) {
+    int testCtaCounts[2] = { 1, maxCtaCount };
+    int nCtaTests        = (maxCtaCount > 1) ? 2 : 1;
+
+    // checkAllEqual — verify all four float4 components are EXPECTED for
+    // every element in h[0..n-1].  Returns false and prints on first mismatch.
+    auto checkAllEqual = [&](const std::vector<float4>& h, int n,
+                              const char* tag) -> bool {
+        for (int i = 0; i < n; i++) {
+            float4 s = h[i];
+            if (s.x != EXPECTED || s.y != EXPECTED ||
+                s.z != EXPECTED || s.w != EXPECTED) {
                 fprintf(stderr,
-                    "[Rank %d] oneshot_mc FAIL: recvBuff[%d] = {%g,%g,%g,%g},"
+                    "[Rank %d] %s FAIL: recvBuf[%d]={%g,%g,%g,%g},"
                     " expected all %g\n",
-                    myRank, i, h[i].x, h[i].y, h[i].z, h[i].w, EXPECTED);
-                pass = 0;
+                    myRank, tag, i, s.x, s.y, s.z, s.w, EXPECTED);
+                return false;
             }
         }
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        if (pass && myRank == 0) printf("[Correctness oneshot_mc       ] PASS\n");
-        fflush(stdout);
-    }
+        return true;
+    };
 
-    // ---- 6b. twoshot_mc_simple ----
-    if (hasMC && pass) {
-        CUDACHECK(cudaMemset(recvBuff, 0, (size_t)TEST_NLINES * sizeof(float4)));
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        twoshot_mc_simple_allreduce_kernel<<<1, TWOSHOT_MC_MAXTHREADS, 0, stream>>>(
-            sendWin, recvWin, (size_t)TEST_NLINES, devComm);
-        CUDACHECK(cudaStreamSynchronize(stream));
-
-        std::vector<float4> h(TEST_NLINES);
-        CUDACHECK(cudaMemcpy(h.data(), recvBuff,
-                             (size_t)TEST_NLINES * sizeof(float4),
-                             cudaMemcpyDeviceToHost));
-        for (int i = 0; i < TEST_NLINES && pass; i++) {
-            if (h[i].x != EXPECTED || h[i].y != EXPECTED ||
-                h[i].z != EXPECTED || h[i].w != EXPECTED) {
-                fprintf(stderr,
-                    "[Rank %d] twoshot_mc_simple FAIL: recvBuff[%d] = {%g,%g,%g,%g},"
-                    " expected all %g\n",
-                    myRank, i, h[i].x, h[i].y, h[i].z, h[i].w, EXPECTED);
-                pass = 0;
-            }
-        }
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        if (pass && myRank == 0) printf("[Correctness twoshot_mc_simple] PASS\n");
-        fflush(stdout);
-    }
-
-    // ---- 6c. twoshot_mc_poison ----
-    //
-    // Triple-buffer rotation (same logic as lsa_poison_alltoall in alltoall/main.cu):
-    //   Iter si: recvBuf = poisBufs[si%3], clearBuf = poisBufs[(si+2)%3].
-    //   skip_barrier = false for si < 2 (entry barrier required until steady state).
-    //
-    // After TEST_ITERS iterations verify:
-    //   (1) Data correct: all floats in last recvBuf == nRanks.
-    //   (2) recvBuf.w != LSA_POISON (kernel left the result intact).
-    //   (3) myRank's chunk of clearBuf.w == LSA_POISON (kernel re-poisoned it).
-    if (hasMC && pass) {
-        float4*      poisBufs[3] = { recvBuff,  recvBuff2,  recvBuff3  };
-        ncclWindow_t poisWins[3] = { recvWin,   recvWin2,   recvWin3   };
-        int poisonBlocks = (TEST_NLINES + 255) / 256;
-
-        for (int b = 0; b < 3; b++)
-            poison_float4_buffer<<<poisonBlocks, 256, 0, stream>>>(
-                poisBufs[b], TEST_NLINES);
-        CUDACHECK(cudaStreamSynchronize(stream));
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-
-        for (int si = 0; si < TEST_ITERS; si++)
-            twoshot_mc_poison_allreduce_kernel<<<1, TWOSHOT_MC_POISON_MAXTHREADS, 0, stream>>>(
-                sendWin,
-                poisBufs[si % 3], poisWins[si % 3],
-                poisBufs[(si + 2) % 3],
-                (size_t)TEST_NLINES, devComm,
-                /*skip_barrier=*/si >= 2);
-        CUDACHECK(cudaStreamSynchronize(stream));
-
-        int lastIdx  = (TEST_ITERS - 1) % 3;
-        int clearIdx = (TEST_ITERS - 1 + 2) % 3;
-
-        std::vector<float4> hRecv(TEST_NLINES), hClear(TEST_NLINES);
-        CUDACHECK(cudaMemcpy(hRecv.data(), poisBufs[lastIdx],
-                             (size_t)TEST_NLINES * sizeof(float4),
-                             cudaMemcpyDeviceToHost));
-        CUDACHECK(cudaMemcpy(hClear.data(), poisBufs[clearIdx],
-                             (size_t)TEST_NLINES * sizeof(float4),
-                             cudaMemcpyDeviceToHost));
-
-        // (1) + (2): data correct and .w not poison.
-        for (int i = 0; i < TEST_NLINES && pass; i++) {
-            float4 s = hRecv[i];
+    // checkClearBuf — verify the clearBuf invariants after twoshot_mc_poison:
+    //   .x/.y/.z == EXPECTED everywhere (from the preceding AllGather).
+    //   .w == LSA_POISON  in [chunkLo, chunkHi)  (re-poisoned by this rank).
+    //   .w == EXPECTED    outside [chunkLo, chunkHi) (AllGather result intact).
+    auto checkClearBuf = [&](const std::vector<float4>& h, int n,
+                              size_t chunkLo, size_t chunkHi,
+                              const char* tag) -> bool {
+        uint32_t expBits; memcpy(&expBits, &EXPECTED, sizeof(uint32_t));
+        for (int i = 0; i < n; i++) {
+            float4 s = h[i];
             if (s.x != EXPECTED || s.y != EXPECTED || s.z != EXPECTED) {
                 fprintf(stderr,
-                    "[Rank %d] twoshot_mc_poison FAIL (data): recvBuf[%d]"
-                    " = {%g,%g,%g}, expected all %g\n",
-                    myRank, i, s.x, s.y, s.z, EXPECTED);
-                pass = 0;
+                    "[Rank %d] %s FAIL (clearBuf xyz): clearBuf[%d]={%g,%g,%g},"
+                    " expected all %g\n",
+                    myRank, tag, i, s.x, s.y, s.z, EXPECTED);
+                return false;
             }
             uint32_t wBits; memcpy(&wBits, &s.w, sizeof(uint32_t));
-            if (wBits == LSA_POISON) {
-                fprintf(stderr,
-                    "[Rank %d] twoshot_mc_poison FAIL (intact): recvBuf[%d].w"
-                    " == LSA_POISON (should be real data)\n", myRank, i);
-                pass = 0;
+            bool inMyChunk = ((size_t)i >= chunkLo && (size_t)i < chunkHi);
+            if (inMyChunk) {
+                if (wBits != LSA_POISON) {
+                    fprintf(stderr,
+                        "[Rank %d] %s FAIL (clearBuf my chunk): clearBuf[%d].w"
+                        "=0x%08X, expected LSA_POISON\n",
+                        myRank, tag, i, wBits);
+                    return false;
+                }
+            } else {
+                if (wBits != expBits) {
+                    fprintf(stderr,
+                        "[Rank %d] %s FAIL (clearBuf other chunk): clearBuf[%d].w"
+                        "=0x%08X, expected 0x%08X\n",
+                        myRank, tag, i, wBits, expBits);
+                    return false;
+                }
             }
         }
-        // (3): myRank's chunk of clearBuf re-poisoned.
-        size_t chunkLines = (size_t)TEST_NLINES / nRanks;
-        size_t myStart    = (size_t)myRank * chunkLines;
-        for (size_t i = myStart; i < myStart + chunkLines && pass; i++) {
-            uint32_t wBits; memcpy(&wBits, &hClear[i].w, sizeof(uint32_t));
-            if (wBits != LSA_POISON) {
-                fprintf(stderr,
-                    "[Rank %d] twoshot_mc_poison FAIL (clear): clearBuf[%zu].w"
-                    " != LSA_POISON (should be re-poisoned)\n", myRank, (size_t)i);
-                pass = 0;
+        return true;
+    };
+
+    int pass = 1;
+
+    for (int ti = 0; ti < nTestSizes && pass; ti++) {
+        int tNlines = testNlines[ti];
+        if ((size_t)tNlines > PERF_MAX_NLINES) continue;
+
+        for (int ci = 0; ci < nCtaTests && pass; ci++) {
+            int  tCtaCount = testCtaCounts[ci];
+            char tag[128];
+
+            // ---- 6a. oneshot_mc ----
+            if (hasMC) {
+                snprintf(tag, sizeof(tag), "oneshot_mc[nlines=%d,ctas=%d]",
+                         tNlines, tCtaCount);
+                CUDACHECK(cudaMemset(recvBuff, 0, (size_t)tNlines * sizeof(float4)));
+                MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
+                oneshot_mc_allreduce_kernel<<<tCtaCount, MC_AR_MAXTHREADS, 0, stream>>>(
+                    recvBuff, sendWin, (size_t)tNlines, devComm);
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                std::vector<float4> h(tNlines);
+                CUDACHECK(cudaMemcpy(h.data(), recvBuff,
+                                     (size_t)tNlines * sizeof(float4),
+                                     cudaMemcpyDeviceToHost));
+                if (!checkAllEqual(h, tNlines, tag)) pass = 0;
+                MPICHECK(MPI_Allreduce(MPI_IN_PLACE, &pass, 1, MPI_INT,
+                                       MPI_MIN, MPI_COMM_WORLD));
+                if (pass && myRank == 0) printf("[Correctness %s] PASS\n", tag);
+                fflush(stdout);
+            }
+
+            // ---- 6b. twoshot_mc_simple ----
+            if (hasMC && pass) {
+                snprintf(tag, sizeof(tag), "twoshot_mc[nlines=%d,ctas=%d]",
+                         tNlines, tCtaCount);
+                CUDACHECK(cudaMemset(recvBuff, 0, (size_t)tNlines * sizeof(float4)));
+                MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
+                twoshot_mc_simple_allreduce_kernel<<<tCtaCount, TWOSHOT_MC_MAXTHREADS, 0, stream>>>(
+                    sendWin, recvWin, (size_t)tNlines, devComm);
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                std::vector<float4> h(tNlines);
+                CUDACHECK(cudaMemcpy(h.data(), recvBuff,
+                                     (size_t)tNlines * sizeof(float4),
+                                     cudaMemcpyDeviceToHost));
+                if (!checkAllEqual(h, tNlines, tag)) pass = 0;
+                MPICHECK(MPI_Allreduce(MPI_IN_PLACE, &pass, 1, MPI_INT,
+                                       MPI_MIN, MPI_COMM_WORLD));
+                if (pass && myRank == 0) printf("[Correctness %s] PASS\n", tag);
+                fflush(stdout);
+            }
+
+            // ---- 6c. twoshot_mc_poison ----
+            //
+            // Triple-buffer rotation:
+            //   Iter si: recvBuf = poisBufs[si%3], clearBuf = poisBufs[(si+2)%3].
+            //   skip_barrier = false for si < 2 (entry barrier until steady state).
+            //
+            // After TEST_ITERS iterations, clearBuf is the buffer that was
+            // last the recvBuf two iters ago.  The AllGather of that iter wrote
+            // EXPECTED to all elements; then the current iter's re-poison pass
+            // wrote LSA_POISON to .w only within this rank's ReduceScatter chunk.
+            if (hasMC && pass) {
+                snprintf(tag, sizeof(tag),
+                         "twoshot_mc_poison[nlines=%d,ctas=%d]",
+                         tNlines, tCtaCount);
+                float4*      poisBufs[3] = { recvBuff,  recvBuff2,  recvBuff3  };
+                ncclWindow_t poisWins[3] = { recvWin,   recvWin2,   recvWin3   };
+                int poisonBlocks = ((int)tNlines + 255) / 256;
+
+                for (int b = 0; b < 3; b++)
+                    poison_float4_buffer<<<poisonBlocks, 256, 0, stream>>>(
+                        poisBufs[b], tNlines);
+                CUDACHECK(cudaStreamSynchronize(stream));
+                MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
+
+                for (int si = 0; si < TEST_ITERS; si++)
+                    twoshot_mc_poison_allreduce_kernel<<<tCtaCount, TWOSHOT_MC_POISON_MAXTHREADS, 0, stream>>>(
+                        sendWin,
+                        poisBufs[si % 3], poisWins[si % 3],
+                        poisBufs[(si + 2) % 3],
+                        (size_t)tNlines, devComm,
+                        /*skip_barrier=*/si >= 2);
+                CUDACHECK(cudaStreamSynchronize(stream));
+                MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
+
+                int lastIdx  = (TEST_ITERS - 1) % 3;
+                int clearIdx = (TEST_ITERS - 1 + 2) % 3;
+
+                size_t chunkLines = (size_t)tNlines / nRanks;
+                size_t myChunkLo  = (size_t)myRank * chunkLines;
+                size_t myChunkHi  = myChunkLo + chunkLines;
+
+                std::vector<float4> hRecv(tNlines), hClear(tNlines);
+                CUDACHECK(cudaMemcpy(hRecv.data(), poisBufs[lastIdx],
+                                     (size_t)tNlines * sizeof(float4),
+                                     cudaMemcpyDeviceToHost));
+                CUDACHECK(cudaMemcpy(hClear.data(), poisBufs[clearIdx],
+                                     (size_t)tNlines * sizeof(float4),
+                                     cudaMemcpyDeviceToHost));
+
+                // (1) All 4 components of recvBuf == EXPECTED.
+                if (!checkAllEqual(hRecv, tNlines, tag)) pass = 0;
+                // (2–4) clearBuf invariants.
+                if (pass && !checkClearBuf(hClear, tNlines,
+                                           myChunkLo, myChunkHi, tag))
+                    pass = 0;
+
+                MPICHECK(MPI_Allreduce(MPI_IN_PLACE, &pass, 1, MPI_INT,
+                                       MPI_MIN, MPI_COMM_WORLD));
+                if (pass && myRank == 0) printf("[Correctness %s] PASS\n", tag);
+                fflush(stdout);
             }
         }
-        MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
-        if (pass && myRank == 0) printf("[Correctness twoshot_mc_poison] PASS\n");
-        fflush(stdout);
     }
 
     if (!hasMC && myRank == 0)
         printf("[Correctness MC kernels       ] SKIPPED (sm < 9.0)\n");
     if (myRank == 0) printf("\n");
     fflush(stdout);
+
+    // Re-fill sendBuff with 1.0f for the performance sweep so bandwidth
+    // numbers reflect a uniform-data workload.
+    {
+        int nFloats = (int)((size_t)PERF_MAX_NLINES * 4);
+        fill_float<<<(nFloats + 255) / 256, 256, 0, stream>>>(
+            (float*)sendBuff, 1.0f, nFloats);
+    }
+    CUDACHECK(cudaStreamSynchronize(stream));
 
     // ------------------------------------------------------------------
     // 7. Performance sweep

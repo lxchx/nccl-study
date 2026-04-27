@@ -563,7 +563,7 @@ ncclResult_t ncclGinGdakiCreateContext(void *collComm, int nSignals, int nCounte
   local_exch_info = (struct gdaki_exch_info *)calloc(nranks, sizeof(*local_exch_info));
   EQCHECKGOTO(local_exch_info, nullptr, status, out);
 
-  remote_exch_info = (struct gdaki_exch_info *)calloc(nranks, sizeof(*remote_exch_info));
+  remote_exch_info = (struct gdaki_exch_info *)calloc(ncontexts * nranks, sizeof(*remote_exch_info));
   EQCHECKGOTO(remote_exch_info, nullptr, status, out);
 
   CUDACHECK(cudaGetDevice(&gdaki_ctx->cuda_id));
@@ -697,23 +697,32 @@ retry_create_qp_hl:
 
     // Exchange information with peers
     NCCLCHECKGOTO(
-      cComm->allToAll(cComm, local_exch_info, remote_exch_info, sizeof(struct gdaki_exch_info)),
+      cComm->allToAll(cComm, local_exch_info, &remote_exch_info[ctx_idx * nranks],
+                      sizeof(struct gdaki_exch_info)),
       status, out);
+  }
 
-    for (int rank_idx = 0; rank_idx < nranks; rank_idx++) {
+  for (int rank_idx = 0; rank_idx < nranks; rank_idx++) {
+    if (rank_idx == rank) continue;
+    for (int ctx_idx = 0; ctx_idx < ncontexts; ctx_idx++) {
       int qp_idx = rank_idx + ctx_idx * nranks;
-      if (rank_idx == rank)
-        gdakiFillExchInfo(&remote_exch_info[rank_idx], gdaki_ctx,
-                          gdaki_ctx->gqps[nqps_for_comm + ctx_idx]);
-
-      NCCLCHECKGOTO(gdakiConnectQp(gdaki_ctx, gdaki_ctx->gqps[qp_idx], &remote_exch_info[rank_idx]),
-                    status, out);
+      struct gdaki_exch_info *peer_info = &remote_exch_info[ctx_idx * nranks + rank_idx];
+      NCCLCHECKGOTO(gdakiConnectQp(gdaki_ctx, gdaki_ctx->gqps[qp_idx], peer_info), status, out);
 
       INFO(NCCL_NET,
            "[%d] Connected main QP: qp_idx=%d, main_qpn=%#x, remote_rank=%d, remote_qpn=%#x", rank,
-           qp_idx, doca_verbs_qp_get_qpn(gdaki_ctx->gqps[qp_idx]->qp), rank_idx,
-           remote_exch_info[rank_idx].qpn);
+           qp_idx, doca_verbs_qp_get_qpn(gdaki_ctx->gqps[qp_idx]->qp), rank_idx, peer_info->qpn);
     }
+  }
+
+  for (int ctx_idx = 0; ctx_idx < ncontexts; ctx_idx++) {
+    int qp_idx = rank + ctx_idx * nranks;
+    struct gdaki_exch_info exch_info;
+    gdakiFillExchInfo(&exch_info, gdaki_ctx, gdaki_ctx->gqps[nqps_for_comm + ctx_idx]);
+    NCCLCHECKGOTO(gdakiConnectQp(gdaki_ctx, gdaki_ctx->gqps[qp_idx], &exch_info), status, out);
+    INFO(NCCL_NET,
+         "[%d] Connected self-loop QP: qp_idx=%d, main_qpn=%#x, peer_qpn=%#x", rank,
+         qp_idx, doca_verbs_qp_get_qpn(gdaki_ctx->gqps[qp_idx]->qp), exch_info.qpn);
   }
 
   for (int qp_idx = 0; qp_idx < nqps_per_rank; qp_idx++) {

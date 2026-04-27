@@ -1691,6 +1691,10 @@ void* ncclProxyService(void* _args) {
     pollfds[s].revents = 0;
   }
 
+  {
+    char line[SOCKET_NAME_MAXLEN+1];
+    INFO(NCCL_INIT, "proxy listening socket at %s", ncclSocketToString(&proxyState->listenSock->addr, line));
+  }
   while (stop == PROXY_RUNNING || npeers > 0) {
     /* Even if local comm aborts, we cannot let proxy thread exit if we still have peer
      * connections. Need to wait until all other related comms call abort and safely exit
@@ -1747,10 +1751,14 @@ void* ncclProxyService(void* _args) {
         INFO(NCCL_PROXY, "[Service thread] Accept failed %s", strerror(errno));
       } else {
         NCCLCHECKGOTO(ncclSocketGetFd(&peers[s].sock, &pollfds[s].fd), ret, fail);
-        pollfds[s].events = NCCL_POLLIN;
-        pollfds[s].revents = 0;
-        npeers++;
-        peers[s].tpLocalRank = -1;
+        if (pollfds[s].fd == NCCL_INVALID_SOCKET) {
+          (void)ncclSocketClose(&peers[s].sock);
+        } else {
+          pollfds[s].events = NCCL_POLLIN;
+          pollfds[s].revents = 0;
+          npeers++;
+          peers[s].tpLocalRank = -1;
+        }
       }
     }
     for (int s=0; s<maxnpeers; s++) {

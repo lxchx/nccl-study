@@ -20,10 +20,6 @@ struct rasConnection* rasConnsTail;
 struct rasSocket *rasSocketsHead;
 struct rasSocket *rasSocketsTail;
 
-// Magic file descriptor number when we want poll() to ignore an entry.  Anything negative would do, but
-// I didn't want to use -1 because it has a special meaning for us.
-#define POLL_FD_IGNORE -2
-
 static void freeConnEntry(struct rasConnection* conn);
 static void rasConnOpen(struct rasConnection* conn);
 static ncclResult_t rasConnPrepare(struct rasConnection* conn);
@@ -409,7 +405,7 @@ ncclResult_t rasNetAcceptNewSocket() {
   NCCLCHECKGOTO(ncclSocketInit(&sock->sock, nullptr, NCCL_SOCKET_MAGIC, ncclSocketTypeRasNetwork, nullptr,
                                /*asyncFlag*/1), ret, fail);
   socketInitialized = true;
-  NCCLCHECKGOTO(ncclSocketAccept(&sock->sock, &rasNetListeningSocket, false), ret, fail);
+  NCCLCHECKGOTO(ncclSocketAccept(&sock->sock, &rasNetListeningSocket), ret, fail);
   NCCLCHECKGOTO(ncclSocketReady(&sock->sock, &ready), ret, fail);
 
   if (sock->sock.socketDescriptor == NCCL_INVALID_SOCKET)
@@ -664,8 +660,12 @@ void rasSockEventLoop(struct rasSocket* sock, int pollIdx) {
           }
         } // if (connectSide)
       } else { // !ready
-        if (sock->sock.state == ncclSocketStateConnecting)
+        if (sock->sock.state == ncclSocketStateConnecting) {
           rasPfds[sock->pfd].fd = POLL_FD_IGNORE; // Don't poll on this socket before connect().
+        } else if (sock->sock.socketDescriptor == NCCL_INVALID_SOCKET) {
+          // Most likely an incoming connection that failed the magic test.
+          rasSocketTerminate(sock);
+        }
       }
     } // if (ncclSocketReady)
   } else { // RAS_SOCK_HANDSHAKE || RAS_SOCK_READY || RAS_SOCK_TERMINATING.

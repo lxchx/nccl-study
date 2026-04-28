@@ -15,8 +15,8 @@ from .cynccl cimport *
 
 ctypedef ncclComm_t Comm
 ctypedef ncclWindow_t Window
+ctypedef ncclParamHandle_t ParamHandle
 ctypedef ncclDevCommWindowTable_t DevCommWindowTable
-ctypedef ncclGinWindow_t GinWindow
 
 ctypedef cudaStream_t Stream
 

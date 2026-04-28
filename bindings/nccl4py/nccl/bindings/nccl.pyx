@@ -1748,57 +1748,55 @@ cdef class MultimemHandle:
         return obj
 
 
-cdef _get_window_vidmem_dtype_offsets():
-    cdef ncclWindow_vidmem_t pod = ncclWindow_vidmem_t()
+cdef _get_resource_window_vidmem_dtype_offsets():
+    cdef ncclResourceWindow_vidmem_t pod = ncclResourceWindow_vidmem_t()
     return _numpy.dtype({
-        'names': ['win_host', 'lsa_flat_base', 'lsa_rank', 'world_rank', 'stride4g', 'mc_offset4k', 'gin_offset4k', 'gin_wins'],
-        'formats': [_numpy.intp, _numpy.intp, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.uint32, _numpy.uint32, (_numpy.intp, 4)],
+        'names': ['reserved1', 'lsa_flat_base', 'reserved2', 'stride4g', 'mc_offset4k', 'reserved3'],
+        'formats': [(_numpy.int8, 8), _numpy.intp, (_numpy.int8, 8), _numpy.uint32, _numpy.uint32, (_numpy.int8, 40)],
         'offsets': [
-            (<intptr_t>&(pod.winHost)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.reserved1)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.lsaFlatBase)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.lsaRank)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.worldRank)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.reserved2)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.stride4G)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.mcOffset4K)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.ginOffset4K)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.ginWins)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.reserved3)) - (<intptr_t>&pod),
         ],
-        'itemsize': sizeof(ncclWindow_vidmem_t),
+        'itemsize': sizeof(ncclResourceWindow_vidmem_t),
     })
 
-window_vidmem_dtype = _get_window_vidmem_dtype_offsets()
+resource_window_vidmem_dtype = _get_resource_window_vidmem_dtype_offsets()
 
-cdef class Window_vidmem:
-    """Empty-initialize an instance of `ncclWindow_vidmem_t`.
+cdef class ResourceWindow_vidmem:
+    """Empty-initialize an instance of `ncclResourceWindow_vidmem_t`.
 
 
-    .. seealso:: `ncclWindow_vidmem_t`
+    .. seealso:: `ncclResourceWindow_vidmem_t`
     """
     cdef:
-        ncclWindow_vidmem_t *_ptr
+        ncclResourceWindow_vidmem_t *_ptr
         object _owner
         bint _owned
         bint _readonly
         dict _refs
 
     def __init__(self):
-        self._ptr = <ncclWindow_vidmem_t *>calloc(1, sizeof(ncclWindow_vidmem_t))
+        self._ptr = <ncclResourceWindow_vidmem_t *>calloc(1, sizeof(ncclResourceWindow_vidmem_t))
         if self._ptr == NULL:
-            raise MemoryError("Error allocating Window_vidmem")
+            raise MemoryError("Error allocating ResourceWindow_vidmem")
         self._owner = None
         self._owned = True
         self._readonly = False
         self._refs = {}
 
     def __dealloc__(self):
-        cdef ncclWindow_vidmem_t *ptr
+        cdef ncclResourceWindow_vidmem_t *ptr
         if self._owned and self._ptr != NULL:
             ptr = self._ptr
             self._ptr = NULL
             free(ptr)
 
     def __repr__(self):
-        return f"<{__name__}.Window_vidmem object at {hex(id(self))}>"
+        return f"<{__name__}.ResourceWindow_vidmem object at {hex(id(self))}>"
 
     @property
     def ptr(self):
@@ -1812,14 +1810,14 @@ cdef class Window_vidmem:
         return <intptr_t>(self._ptr)
 
     def __eq__(self, other):
-        cdef Window_vidmem other_
-        if not isinstance(other, Window_vidmem):
+        cdef ResourceWindow_vidmem other_
+        if not isinstance(other, ResourceWindow_vidmem):
             return False
         other_ = other
-        return (memcmp(<void *><intptr_t>(self._ptr), <void *><intptr_t>(other_._ptr), sizeof(ncclWindow_vidmem_t)) == 0)
+        return (memcmp(<void *><intptr_t>(self._ptr), <void *><intptr_t>(other_._ptr), sizeof(ncclResourceWindow_vidmem_t)) == 0)
 
     def __getbuffer__(self, Py_buffer *buffer, int flags):
-        __getbuffer(self, buffer, <void *>self._ptr, sizeof(ncclWindow_vidmem_t), self._readonly)
+        __getbuffer(self, buffer, <void *>self._ptr, sizeof(ncclResourceWindow_vidmem_t), self._readonly)
 
     def __releasebuffer__(self, Py_buffer *buffer):
         pass
@@ -1828,26 +1826,15 @@ cdef class Window_vidmem:
         if key == 0 and isinstance(val, _numpy.ndarray):
             if self._ptr != NULL and self._owned:
                 free(self._ptr)
-            self._ptr = <ncclWindow_vidmem_t *>malloc(sizeof(ncclWindow_vidmem_t))
+            self._ptr = <ncclResourceWindow_vidmem_t *>malloc(sizeof(ncclResourceWindow_vidmem_t))
             if self._ptr == NULL:
-                raise MemoryError("Error allocating Window_vidmem")
-            memcpy(<void*>self._ptr, <void*><intptr_t>val.ctypes.data, sizeof(ncclWindow_vidmem_t))
+                raise MemoryError("Error allocating ResourceWindow_vidmem")
+            memcpy(<void*>self._ptr, <void*><intptr_t>val.ctypes.data, sizeof(ncclResourceWindow_vidmem_t))
             self._owner = None
             self._owned = True
             self._readonly = not val.flags.writeable
         else:
             setattr(self, key, val)
-
-    @property
-    def win_host(self):
-        """int: """
-        return <intptr_t>(self._ptr[0].winHost)
-
-    @win_host.setter
-    def win_host(self, val):
-        if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
-        self._ptr[0].winHost = <void *><intptr_t>val
 
     @property
     def lsa_flat_base(self):
@@ -1860,33 +1847,11 @@ cdef class Window_vidmem:
     @lsa_flat_base.setter
     def lsa_flat_base(self, val):
         if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
+            raise ValueError("This ResourceWindow_vidmem instance is read-only")
         cdef bytes buf = val.encode()
         cdef char *ptr = buf
         self._refs["lsa_flat_base"] = buf
         self._ptr.lsaFlatBase = <char *><intptr_t>ptr
-
-    @property
-    def lsa_rank(self):
-        """int: """
-        return self._ptr[0].lsaRank
-
-    @lsa_rank.setter
-    def lsa_rank(self, val):
-        if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
-        self._ptr[0].lsaRank = val
-
-    @property
-    def world_rank(self):
-        """int: """
-        return self._ptr[0].worldRank
-
-    @world_rank.setter
-    def world_rank(self, val):
-        if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
-        self._ptr[0].worldRank = val
 
     @property
     def stride4g(self):
@@ -1896,7 +1861,7 @@ cdef class Window_vidmem:
     @stride4g.setter
     def stride4g(self, val):
         if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
+            raise ValueError("This ResourceWindow_vidmem instance is read-only")
         self._ptr[0].stride4G = val
 
     @property
@@ -1907,57 +1872,29 @@ cdef class Window_vidmem:
     @mc_offset4k.setter
     def mc_offset4k(self, val):
         if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
+            raise ValueError("This ResourceWindow_vidmem instance is read-only")
         self._ptr[0].mcOffset4K = val
 
-    @property
-    def gin_offset4k(self):
-        """int: """
-        return self._ptr[0].ginOffset4K
-
-    @gin_offset4k.setter
-    def gin_offset4k(self, val):
-        if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
-        self._ptr[0].ginOffset4K = val
-
-    @property
-    def gin_wins(self):
-        """~_numpy.intp: (array of length 4)."""
-        cdef view.array arr = view.array(shape=(4,), itemsize=sizeof(intptr_t), format="q", mode="c", allocate_buffer=False)
-        arr.data = <char *>(&(self._ptr[0].ginWins))
-        return _numpy.asarray(arr)
-
-    @gin_wins.setter
-    def gin_wins(self, val):
-        if self._readonly:
-            raise ValueError("This Window_vidmem instance is read-only")
-        if len(val) != 4:
-            raise ValueError(f"Expected length { 4 } for field gin_wins, got {len(val)}")
-        cdef view.array arr = view.array(shape=(4,), itemsize=sizeof(intptr_t), format="q", mode="c")
-        arr[:] = _numpy.asarray(val, dtype=_numpy.intp)
-        memcpy(<void *>(&(self._ptr[0].ginWins)), <void *>(arr.data), sizeof(intptr_t) * len(val))
-
     def __getstate__(self):
-        raise pickle.PicklingError("Pickle not supported for Window_vidmem")
+        raise pickle.PicklingError("Pickle not supported for ResourceWindow_vidmem")
 
     @staticmethod
     def from_buffer(buffer):
-        """Create an Window_vidmem instance with the memory from the given buffer."""
-        return __from_buffer(buffer, sizeof(ncclWindow_vidmem_t), Window_vidmem)
+        """Create an ResourceWindow_vidmem instance with the memory from the given buffer."""
+        return __from_buffer(buffer, sizeof(ncclResourceWindow_vidmem_t), ResourceWindow_vidmem)
 
     @staticmethod
     def from_data(data):
-        """Create an Window_vidmem instance wrapping the given NumPy array.
+        """Create an ResourceWindow_vidmem instance wrapping the given NumPy array.
 
         Args:
-            data (_numpy.ndarray): a single-element array of dtype `window_vidmem_dtype` holding the data.
+            data (_numpy.ndarray): a single-element array of dtype `resource_window_vidmem_dtype` holding the data.
         """
-        return __from_data(data, "window_vidmem_dtype", window_vidmem_dtype, Window_vidmem)
+        return __from_data(data, "resource_window_vidmem_dtype", resource_window_vidmem_dtype, ResourceWindow_vidmem)
 
     @staticmethod
     def from_ptr(intptr_t ptr, bint readonly=False, object owner=None):
-        """Create an Window_vidmem instance wrapping the given pointer.
+        """Create an ResourceWindow_vidmem instance wrapping the given pointer.
 
         Args:
             ptr (intptr_t): pointer address as Python :class:`int` to the data.
@@ -1966,16 +1903,16 @@ cdef class Window_vidmem:
         """
         if ptr == 0:
             raise ValueError("ptr must not be null (0)")
-        cdef Window_vidmem obj = Window_vidmem.__new__(Window_vidmem)
+        cdef ResourceWindow_vidmem obj = ResourceWindow_vidmem.__new__(ResourceWindow_vidmem)
         if owner is None:
-            obj._ptr = <ncclWindow_vidmem_t *>malloc(sizeof(ncclWindow_vidmem_t))
+            obj._ptr = <ncclResourceWindow_vidmem_t *>malloc(sizeof(ncclResourceWindow_vidmem_t))
             if obj._ptr == NULL:
-                raise MemoryError("Error allocating Window_vidmem")
-            memcpy(<void*>(obj._ptr), <void*>ptr, sizeof(ncclWindow_vidmem_t))
+                raise MemoryError("Error allocating ResourceWindow_vidmem")
+            memcpy(<void*>(obj._ptr), <void*>ptr, sizeof(ncclResourceWindow_vidmem_t))
             obj._owner = None
             obj._owned = True
         else:
-            obj._ptr = <ncclWindow_vidmem_t *>ptr
+            obj._ptr = <ncclResourceWindow_vidmem_t *>ptr
             obj._owner = owner
             obj._owned = False
         obj._readonly = readonly
@@ -2455,9 +2392,11 @@ cdef class TeamRequirements:
 cdef _get_dev_comm_dtype_offsets():
     cdef ncclDevComm_t pod = ncclDevComm_t()
     return _numpy.dtype({
-        'names': ['rank', 'n_ranks', 'n_ranks_rcp32', 'lsa_rank', 'lsa_size', 'lsa_size_rcp32', 'window_table', 'resource_window', 'resource_window_inlined', 'lsa_multimem', 'lsa_barrier', 'rail_gin_barrier', 'gin_connection_count', 'gin_net_device_types', 'gin_handles', 'gin_signal_base', 'gin_signal_count', 'gin_counter_base', 'gin_counter_count', 'gin_signal_shadows', 'gin_context_count', 'gin_context_base', 'gin_is_railed', 'abort_flag', 'hybrid_lsa_barrier', 'hybrid_rail_gin_barrier', 'world_gin_barrier'],
-        'formats': [_numpy.int32, _numpy.int32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.intp, _numpy.intp, window_vidmem_dtype, multimem_handle_dtype, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, _numpy.uint8, (_numpy.uint8, 4), (_numpy.int64, 4), _numpy.uint32, _numpy.int32, _numpy.uint32, _numpy.int32, _numpy.intp, _numpy.uint32, _numpy.uint32, _numpy.uint8, _numpy.intp, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, gin_barrier_handle_dtype],
+        'names': ['magic', 'version', 'rank', 'n_ranks', 'n_ranks_rcp32', 'lsa_rank', 'lsa_size', 'lsa_size_rcp32', 'window_table', 'resource_window', 'resource_window_inlined', 'lsa_multimem', 'lsa_barrier', 'rail_gin_barrier', 'gin_connection_count', 'gin_net_device_types', 'gin_handles', 'gin_signal_count', 'gin_counter_count', 'gin_signal_shadows', 'gin_context_count', 'gin_is_railed', 'abort_flag', 'hybrid_lsa_barrier', 'hybrid_rail_gin_barrier', 'world_gin_barrier'],
+        'formats': [_numpy.uint32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.intp, _numpy.intp, resource_window_vidmem_dtype, multimem_handle_dtype, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, _numpy.uint8, (_numpy.uint8, 4), (_numpy.int64, 4), _numpy.int32, _numpy.int32, _numpy.intp, _numpy.uint32, _numpy.uint8, _numpy.intp, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, gin_barrier_handle_dtype],
         'offsets': [
+            (<intptr_t>&(pod.magic)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.version)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.rank)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.nRanks)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.nRanks_rcp32)) - (<intptr_t>&pod),
@@ -2473,13 +2412,10 @@ cdef _get_dev_comm_dtype_offsets():
             (<intptr_t>&(pod.ginConnectionCount)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginNetDeviceTypes)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginHandles)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.ginSignalBase)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginSignalCount)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.ginCounterBase)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginCounterCount)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginSignalShadows)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginContextCount)) - (<intptr_t>&pod),
-            (<intptr_t>&(pod.ginContextBase)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginIsRailed)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.abortFlag)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.hybridLsaBarrier)) - (<intptr_t>&pod),
@@ -2561,15 +2497,15 @@ cdef class DevComm:
 
     @property
     def resource_window_inlined(self):
-        """Window_vidmem: """
-        return Window_vidmem.from_ptr(<intptr_t>&(self._ptr[0].resourceWindow_inlined), self._readonly, self)
+        """ResourceWindow_vidmem: """
+        return ResourceWindow_vidmem.from_ptr(<intptr_t>&(self._ptr[0].resourceWindow_inlined), self._readonly, self)
 
     @resource_window_inlined.setter
     def resource_window_inlined(self, val):
         if self._readonly:
             raise ValueError("This DevComm instance is read-only")
-        cdef Window_vidmem val_ = val
-        memcpy(<void *>&(self._ptr[0].resourceWindow_inlined), <void *>(val_._get_ptr()), sizeof(ncclWindow_vidmem_t) * 1)
+        cdef ResourceWindow_vidmem val_ = val
+        memcpy(<void *>&(self._ptr[0].resourceWindow_inlined), <void *>(val_._get_ptr()), sizeof(ncclResourceWindow_vidmem_t) * 1)
 
     @property
     def lsa_multimem(self):
@@ -2642,6 +2578,28 @@ cdef class DevComm:
             raise ValueError("This DevComm instance is read-only")
         cdef GinBarrierHandle val_ = val
         memcpy(<void *>&(self._ptr[0].worldGinBarrier), <void *>(val_._get_ptr()), sizeof(ncclGinBarrierHandle_t) * 1)
+
+    @property
+    def magic(self):
+        """int: """
+        return self._ptr[0].magic
+
+    @magic.setter
+    def magic(self, val):
+        if self._readonly:
+            raise ValueError("This DevComm instance is read-only")
+        self._ptr[0].magic = val
+
+    @property
+    def version(self):
+        """int: """
+        return self._ptr[0].version
+
+    @version.setter
+    def version(self, val):
+        if self._readonly:
+            raise ValueError("This DevComm instance is read-only")
+        self._ptr[0].version = val
 
     @property
     def rank(self):
@@ -2777,17 +2735,6 @@ cdef class DevComm:
         memcpy(<void *>(&(self._ptr[0].ginHandles)), <void *>(arr.data), sizeof(intptr_t) * len(val))
 
     @property
-    def gin_signal_base(self):
-        """int: """
-        return self._ptr[0].ginSignalBase
-
-    @gin_signal_base.setter
-    def gin_signal_base(self, val):
-        if self._readonly:
-            raise ValueError("This DevComm instance is read-only")
-        self._ptr[0].ginSignalBase = val
-
-    @property
     def gin_signal_count(self):
         """int: """
         return self._ptr[0].ginSignalCount
@@ -2797,17 +2744,6 @@ cdef class DevComm:
         if self._readonly:
             raise ValueError("This DevComm instance is read-only")
         self._ptr[0].ginSignalCount = val
-
-    @property
-    def gin_counter_base(self):
-        """int: """
-        return self._ptr[0].ginCounterBase
-
-    @gin_counter_base.setter
-    def gin_counter_base(self, val):
-        if self._readonly:
-            raise ValueError("This DevComm instance is read-only")
-        self._ptr[0].ginCounterBase = val
 
     @property
     def gin_counter_count(self):
@@ -2841,17 +2777,6 @@ cdef class DevComm:
         if self._readonly:
             raise ValueError("This DevComm instance is read-only")
         self._ptr[0].ginContextCount = val
-
-    @property
-    def gin_context_base(self):
-        """int: """
-        return self._ptr[0].ginContextBase
-
-    @gin_context_base.setter
-    def gin_context_base(self, val):
-        if self._readonly:
-            raise ValueError("This DevComm instance is read-only")
-        self._ptr[0].ginContextBase = val
 
     @property
     def gin_is_railed(self):
@@ -2922,8 +2847,8 @@ cdef class DevComm:
 cdef _get_dev_comm_requirements_dtype_offsets():
     cdef ncclDevCommRequirements_t pod = ncclDevCommRequirements_t()
     return _numpy.dtype({
-        'names': ['size_', 'magic', 'version', 'resource_requirements_list', 'team_requirements_list', 'lsa_multimem', 'barrier_count', 'lsa_barrier_count', 'rail_gin_barrier_count', 'lsa_ll_a2a_block_count', 'lsa_ll_a2a_slot_count', 'gin_force_enable', 'gin_context_count', 'gin_signal_count', 'gin_counter_count', 'gin_connection_type', 'gin_exclusive_contexts', 'gin_queue_depth', 'world_gin_barrier_count'],
-        'formats': [_numpy.uint64, _numpy.uint32, _numpy.uint32, _numpy.intp, _numpy.intp, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32],
+        'names': ['size_', 'magic', 'version', 'resource_requirements_list', 'team_requirements_list', 'lsa_multimem', 'barrier_count', 'lsa_barrier_count', 'rail_gin_barrier_count', 'lsa_ll_a2a_block_count', 'lsa_ll_a2a_slot_count', 'gin_force_enable', 'gin_context_count', 'gin_signal_count', 'gin_counter_count', 'gin_connection_type', 'gin_exclusive_contexts', 'gin_queue_depth', 'gin_traffic_class', 'world_gin_barrier_count'],
+        'formats': [_numpy.uint64, _numpy.uint32, _numpy.uint32, _numpy.intp, _numpy.intp, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32],
         'offsets': [
             (<intptr_t>&(pod.size)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.magic)) - (<intptr_t>&pod),
@@ -2943,6 +2868,7 @@ cdef _get_dev_comm_requirements_dtype_offsets():
             (<intptr_t>&(pod.ginConnectionType)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginExclusiveContexts)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginQueueDepth)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.ginTrafficClass)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.worldGinBarrierCount)) - (<intptr_t>&pod),
         ],
         'itemsize': sizeof(ncclDevCommRequirements_t),
@@ -3217,6 +3143,17 @@ cdef class DevCommRequirements:
         self._ptr[0].ginQueueDepth = val
 
     @property
+    def gin_traffic_class(self):
+        """int: """
+        return self._ptr[0].ginTrafficClass
+
+    @gin_traffic_class.setter
+    def gin_traffic_class(self, val):
+        if self._readonly:
+            raise ValueError("This DevCommRequirements instance is read-only")
+        self._ptr[0].ginTrafficClass = val
+
+    @property
     def world_gin_barrier_count(self):
         """int: """
         return self._ptr[0].worldGinBarrierCount
@@ -3288,6 +3225,7 @@ class Result(_IntEnum):
     InvalidUsage = ncclInvalidUsage
     RemoteError = ncclRemoteError
     InProgress = ncclInProgress
+    Timeout = ncclTimeout
     NumResults = ncclNumResults
 
 class CommMemStat(_IntEnum):

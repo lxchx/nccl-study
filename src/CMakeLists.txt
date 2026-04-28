@@ -130,6 +130,8 @@ if(NCCL_OS_WINDOWS)
 endif()
 
 # Copy all device header files to the destination
+# Note: The only public headers are nccl.h and nccl_device.h (and, by extension, nccl_device/*).
+# Adding any other headers to this list should be discussed widely.
 foreach(HEADER_FILE ${SRC_DEVICE_HEADERS})
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${HEADER_FILE} ${CMAKE_BINARY_DIR}/${HEADER_FILE} COPYONLY)
     list(APPEND DEVICE_HEADERS ${CMAKE_BINARY_DIR}/${HEADER_FILE})

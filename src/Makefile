@@ -8,6 +8,7 @@ include ../makefiles/common.mk
 include ../makefiles/version.mk
 
 ##### src files
+# The only public headers are nccl.h and nccl_device.h. Any changes to this list should be discussed widely.
 INCEXPORTS  := nccl.h nccl_device.h \
 	$(patsubst include/%,%,$(wildcard include/nccl_device/*.h include/nccl_device/*/*.h include/nccl_device/*/*/*.h))
 

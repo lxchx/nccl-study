@@ -40,14 +40,14 @@ struct ncclWindow_vidmem {
 // Inlined resource-window. This is a subset of ncclWindow_vidmem with only fields
 // used for resource-buffer addressing. Same size as ncclWindow_vidmem for backward
 // compatibility.
-struct ncclResourceWindow_vidmem {
+typedef struct ncclResourceWindow_vidmem {
   char reserved1[8];
   char* lsaFlatBase;
   char reserved2[8];
   uint32_t stride4G;
   uint32_t mcOffset4K;
   char reserved3[40];
-};
+} ncclResourceWindow_vidmem_t;
 
 struct ncclMultimemHandle {
   void* mcBasePtr;

@@ -23,19 +23,19 @@ Traditional approaches separate computation and communication into distinct phas
 
 ### RMSNorm Operation
 
-RMSNorm is a normalization technique commonly used in transformer models. For a vector $\mathbf{x} = [x_1, x_2, \ldots, x_n]$, the RMSNorm is computed as:
+RMSNorm is a normalization technique commonly used in transformer models. For a vector $`\mathbf{x} = \bigl[\, x_1,\, x_2,\, \ldots,\, x_n \,\bigr]`$, the RMSNorm is computed as:
 
-$$
-\text{RMS}(\mathbf{x}) = \sqrt{\left(\frac{1}{n}\sum_{i=1}^{n} x_i^2\right) + \epsilon}
-$$
+```math
+\text{RMS}(\mathbf{x}) = \sqrt{\frac{1}{n}\sum_{i=1}^{n} x_i^2 + \epsilon}
+```
 
-$$
+```math
 y_j = \frac{x_j}{\text{RMS}(\mathbf{x})}
-$$
+```
 
 where $\mathbf{y}$ is the normalized output vector, $j$ indexes each element of the output, $i$ indexes the features (dimensions) of the hidden representation, $n$ is the hidden dimension size, and $\epsilon$ is a small constant for numerical stability.
 
-**Note**: As in PyTorch's [RMSNorm](https://docs.pytorch.org/docs/stable/generated/torch.nn.RMSNorm.html), $\epsilon$ is added **inside** the square root (to the mean of squares before taking the root), not outside. The complete RMSNorm typically includes learnable scale parameters $\gamma_j$ such that $y_j = \frac{x_j}{\text{RMS}(\mathbf{x})} \cdot \gamma_j$. For simplicity, these examples assume $\gamma_j = 1$ for all $j$, focusing on the communication and reduction patterns rather than the learned scaling.
+**Note**: As in PyTorch's [RMSNorm](https://docs.pytorch.org/docs/stable/generated/torch.nn.RMSNorm.html), $\epsilon$ is added **inside** the square root (to the mean of squares before taking the root), not outside. The complete RMSNorm typically includes learnable scale parameters $\gamma_j$ such that $`y_j = \frac{x_j}{\text{RMS}(\mathbf{x})} \cdot \gamma_j`$. For simplicity, these examples assume $\gamma_j = 1$ for all $j$, focusing on the communication and reduction patterns rather than the learned scaling.
 
 ### Distributed RMSNorm: A Concrete Example
 
@@ -52,7 +52,12 @@ The partial contributions come from the previous layer in a tensor-parallel setu
 **Why RMSNorm Requires Reduce-Scatter and All-Gather Communication**
 
 RMSNorm must be computed on the **complete** activations (after summing all partial contributions), not on the partial results from individual GPUs. This is because:
-- The RMS normalization depends on all features: $\text{RMS}(\mathbf{x}) = \sqrt{\frac{1}{H}\sum_{d=0}^{H-1} x_d^2}$
+- The RMS normalization depends on all features:
+
+    ```math
+    \text{RMS}(\mathbf{x}) = \sqrt{\frac{1}{H}\sum_{d=0}^{H-1} x_d^2}
+    ```
+
 - Computing RMSNorm on partial contributions would yield incorrect statistics
 
 Therefore, the distributed RMSNorm operation must follow these steps:
@@ -65,24 +70,24 @@ This is the motivation for the three-phase pattern demonstrated in these example
 **Initial State** - Each GPU holds partial contributions for all tokens from the previous layer:
 
 GPU 0 holds:
-$$
+```math
 \mathbf{X}^0 = \begin{bmatrix}
 x^0_{0,0} & x^0_{0,1} & \cdots & x^0_{0,7} \\
 x^0_{1,0} & x^0_{1,1} & \cdots & x^0_{1,7} \\
 x^0_{2,0} & x^0_{2,1} & \cdots & x^0_{2,7} \\
 x^0_{3,0} & x^0_{3,1} & \cdots & x^0_{3,7}
 \end{bmatrix}
-$$
+```
 
 GPU 1 holds:
-$$
+```math
 \mathbf{X}^1 = \begin{bmatrix}
 x^1_{0,0} & x^1_{0,1} & \cdots & x^1_{0,7} \\
 x^1_{1,0} & x^1_{1,1} & \cdots & x^1_{1,7} \\
 x^1_{2,0} & x^1_{2,1} & \cdots & x^1_{2,7} \\
 x^1_{3,0} & x^1_{3,1} & \cdots & x^1_{3,7}
 \end{bmatrix}
-$$
+```
 
 where the superscript denotes the GPU rank and subscripts denote $x^{\text{rank}}_{\text{token}, \text{dimension}}$.
 
@@ -96,43 +101,43 @@ After the reduce-scatter communication and reduction, each GPU holds the summed 
 
 **Computing the sums** - Each element is obtained by summing contributions from all GPUs. For example, GPU 0 computes for tokens 0 and 1:
 
-$$
+```math
 s_{0,0} = x^0_{0,0} + x^1_{0,0}, \quad s_{0,1} = x^0_{0,1} + x^1_{0,1}, \quad \ldots, \quad s_{0,7} = x^0_{0,7} + x^1_{0,7}
-$$
+```
 
-$$
+```math
 s_{1,0} = x^0_{1,0} + x^1_{1,0}, \quad s_{1,1} = x^0_{1,1} + x^1_{1,1}, \quad \ldots, \quad s_{1,7} = x^0_{1,7} + x^1_{1,7}
-$$
+```
 
 Similarly, GPU 1 computes for tokens 2 and 3:
 
-$$
+```math
 s_{2,0} = x^0_{2,0} + x^1_{2,0}, \quad s_{2,1} = x^0_{2,1} + x^1_{2,1}, \quad \ldots, \quad s_{2,7} = x^0_{2,7} + x^1_{2,7}
-$$
+```
 
-$$
+```math
 s_{3,0} = x^0_{3,0} + x^1_{3,0}, \quad s_{3,1} = x^0_{3,1} + x^1_{3,1}, \quad \ldots, \quad s_{3,7} = x^0_{3,7} + x^1_{3,7}
-$$
+```
 
 In general, $s_{t,d} = \sum_{r=0}^{1} x^r_{t,d}$ represents the complete sum across all GPU contributions.
 
 **Resulting matrices:**
 
 GPU 0 receives and sums:
-$$
+```math
 \mathbf{S}^0 = \begin{bmatrix}
 s_{0,0} & s_{0,1} & \cdots & s_{0,7} \\
 s_{1,0} & s_{1,1} & \cdots & s_{1,7}
 \end{bmatrix}
-$$
+```
 
 GPU 1 receives and sums:
-$$
+```math
 \mathbf{S}^1 = \begin{bmatrix}
 s_{2,0} & s_{2,1} & \cdots & s_{2,7} \\
 s_{3,0} & s_{3,1} & \cdots & s_{3,7}
 \end{bmatrix}
-$$
+```
 
 where $s_{t,d} = x^0_{t,d} + x^1_{t,d}$ represents the complete summed value (no longer a partial GPU contribution).
 
@@ -140,45 +145,45 @@ where $s_{t,d} = x^0_{t,d} + x^1_{t,d}$ represents the complete summed value (no
 
 Each GPU computes RMSNorm for its assigned tokens. For token $t$ on GPU $g$:
 
-$$
-\text{RMS}_t = \sqrt{\left(\frac{1}{8}\sum_{d=0}^{7} (\mathbf{S}^g[t,d])^2\right) + \epsilon}
-$$
+```math
+\text{RMS}_t = \sqrt{\frac{1}{8}\sum_{d=0}^{7} (\mathbf{S}^{g}_{t,d})^2 + \epsilon}
+```
 
-$$
-y_{t,d} = \frac{\mathbf{S}^g[t,d]}{\text{RMS}_t}
-$$
+```math
+y_{t,d} = \frac{\mathbf{S}^{g}_{t,d}}{\text{RMS}_t}
+```
 
 After normalization:
 
 GPU 0 produces:
-$$
+```math
 \mathbf{Y}^0 = \begin{bmatrix}
 y_{0,0} & y_{0,1} & \cdots & y_{0,7} \\
 y_{1,0} & y_{1,1} & \cdots & y_{1,7}
 \end{bmatrix}
-$$
+```
 
 GPU 1 produces:
-$$
+```math
 \mathbf{Y}^1 = \begin{bmatrix}
 y_{2,0} & y_{2,1} & \cdots & y_{2,7} \\
 y_{3,0} & y_{3,1} & \cdots & y_{3,7}
 \end{bmatrix}
-$$
+```
 
 #### Phase 3: All-Gather
 
 Each GPU broadcasts its normalized tokens back to all GPUs. After this phase, every GPU has the complete normalized result:
 
 Both GPU 0 and GPU 1 hold:
-$$
+```math
 \mathbf{Y} = \begin{bmatrix}
 y_{0,0} & y_{0,1} & \cdots & y_{0,7} \\
 y_{1,0} & y_{1,1} & \cdots & y_{1,7} \\
 y_{2,0} & y_{2,1} & \cdots & y_{2,7} \\
 y_{3,0} & y_{3,1} & \cdots & y_{3,7}
 \end{bmatrix}
-$$
+```
 
 ### Fusion Benefits
 
@@ -708,33 +713,30 @@ Host buffers `h_data` and `h_data_validation` are allocated and initialized in S
 
 The receive window's strided layout **after Phase 1 PUT** can be represented as (shown for **rank 0**):
 
-$$
-\mathbf{W}_{\text{recv}}^0 = \begin{bmatrix}
+```math
+\mathbf{W}_{\text{recv}}^0 = \left[\begin{array}{c}
 \text{Token 0 from GPU 0} \\
 \text{Token 1 from GPU 0} \\
 \vdots \\
-\text{Token } (L/N-1) \text{ from GPU 0} \\
-\hline
+\text{Token } (L/N-1) \text{ from GPU 0} \\[10pt]
 \text{Token 0 from GPU 1} \\
 \text{Token 1 from GPU 1} \\
 \vdots \\
-\text{Token } (L/N-1) \text{ from GPU 1} \\
-\hline
-\vdots \\
-\hline
+\text{Token } (L/N-1) \text{ from GPU 1} \\[10pt]
+\vdots \\[10pt]
 \text{Token 0 from GPU } (N-1) \\
 \text{Token 1 from GPU } (N-1) \\
 \vdots \\
 \text{Token } (L/N-1) \text{ from GPU } (N-1)
-\end{bmatrix} \in \mathbb{R}^{L \times H}
-$$
+\end{array}\right] \in \mathbb{R}^{L \times H}
+```
 
-Each "Token $t$ from GPU $p$" block contains $H$ elements. Note that "Token $t$" refers to the local token index on GPU $p$ (i.e., `blockIdx.x = t`), which corresponds to global token $p \cdot (L/N) + t$. For rank 0, the tokens in the first section are global tokens 0 through $L/N-1$. Other ranks have the same structure but process different global tokens.
+Each "Token $t$ from GPU $p$" block contains $H$ elements. Note that "Token $t$" refers to the local token index on GPU $p$ (i.e., `blockIdx.x = t`), which corresponds to global token $`p \cdot \frac{L}{N} + t`$. For rank 0, the tokens in the first section are global tokens 0 through $`\frac{L}{N} - 1`$. Other ranks have the same structure but process different global tokens.
 
 **Reduction into the First Section**: After receiving all contributions, each GPU performs the reduction **in-place** by summing across peer contributions and storing the results in the **first part** of the buffer (offsets `0` to `tokens_per_gpu * hidden_dim - 1`). Specifically:
-- GPU $r$ sums contributions for its assigned tokens (tokens $r \cdot (L/N)$ through $(r+1) \cdot (L/N) - 1$)
-- For block $b$ processing token $t = r \cdot (L/N) + b$:
-  - Reads from positions: `my_token_data[j + i * hidden_dim * gridDim.x]` for peer $i \in \{0, 1, \ldots, N-1\}$
+- GPU with rank $`r`$ sums contributions for its assigned tokens, where *k* is a global token index satisfying $`r \cdot \frac{L}{N} \leq k \leq (r+1) \cdot \frac{L}{N} - 1`$.
+- For block $`b`$ processing token $`t = r \cdot \frac{L}{N} + b`$:
+  - Reads from positions: `my_token_data[j + i * hidden_dim * gridDim.x]` for peer $`i \in \{0, 1, \ldots, N-1\}`$
   - Writes sum to: `my_token_data[j]` (the first section, overwriting peer 0's contribution)
 - After reduction, only the first `tokens_per_gpu * hidden_dim` elements contain valid summed data
 - The remaining space (contributions from peers 1 through $N-1$) becomes unused scratch space

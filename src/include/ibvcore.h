@@ -226,6 +226,10 @@ enum ibv_port_cap_flags {
 	IBV_PORT_IP_BASED_GIDS			= 1 << 26,
 };
 
+enum ibv_query_port_flags {
+	IBV_QPF_GRH_REQUIRED = 1 << 0,
+};
+
 struct ibv_port_attr {
 	enum ibv_port_state	state;
 	enum ibv_mtu		max_mtu;

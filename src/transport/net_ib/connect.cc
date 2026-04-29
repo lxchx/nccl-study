@@ -402,18 +402,21 @@ ncclResult_t ncclIbQpRtr(struct ncclIbQp* qp) {
     qpAttr.ah_attr.grh.hop_limit = 255;
     qpAttr.ah_attr.grh.traffic_class = rtrAttr->tc;
   } else {
-    //pick lid if subnet prefixs are same, FLID if they are not
-    if (ncclIbExtractLocalSubnetPrefix(rtrAttr->localGid.global.subnet_prefix) ==
-        ncclIbExtractLocalSubnetPrefix(rtrAttr->remoteGid.global.subnet_prefix)) {
-      qpAttr.ah_attr.is_global = 0;
-      qpAttr.ah_attr.dlid = rtrAttr->remoteLid;
-    } else {
-      uint16_t flid = ncclIbExtractFlid(&rtrAttr->remoteGid);
-      if (flid == 0) {
-        WARN("Warning: remote FLID configured as zero even when endpoints are on different subnets, using dlid as fallback");
-        qpAttr.ah_attr.dlid = rtrAttr->remoteLid;
-      } else {
-        qpAttr.ah_attr.dlid = ncclIbExtractFlid(&rtrAttr->remoteGid);
+    // Path-local if same subnet and GRH not required; else global addressing. FLID only when subnets differ.
+    bool sameSubnet = (ncclIbExtractLocalSubnetPrefix(rtrAttr->localGid.global.subnet_prefix) ==
+                       ncclIbExtractLocalSubnetPrefix(rtrAttr->remoteGid.global.subnet_prefix));
+    bool needGlobal = !sameSubnet || (rtrAttr->localPortFlags & IBV_QPF_GRH_REQUIRED);
+    qpAttr.ah_attr.is_global = 0;
+    qpAttr.ah_attr.dlid = rtrAttr->remoteLid;
+    if (needGlobal) {
+      if (!sameSubnet) {
+        uint16_t flid = ncclIbExtractFlid(&rtrAttr->remoteGid);
+        if (flid == 0) {
+          WARN("Warning: remote FLID configured as zero even when endpoints are on different subnets, using dlid as fallback");
+          qpAttr.ah_attr.dlid = rtrAttr->remoteLid;
+        } else {
+          qpAttr.ah_attr.dlid = flid;
+        }
       }
       qpAttr.ah_attr.is_global = 1;
       qpAttr.ah_attr.grh.dgid.global.subnet_prefix = rtrAttr->remoteGid.global.subnet_prefix;
@@ -619,6 +622,7 @@ static ncclResult_t ncclIbSenderQpsToRts(ncclIbSendComm* comm, struct ncclIbConn
     rtrAttr->remoteLid = remDevInfo->lid;
     rtrAttr->remoteGid = remDevInfo->gid;
     rtrAttr->localIbPort = remDevInfo->ib_port;
+    rtrAttr->localPortFlags = ibDev->portAttr.flags;
     rtrAttr->localGid = commDev->base.gidInfo.localGid;
     rtrAttr->localGidIndex = commDev->base.gidInfo.localGidIndex;
     NCCLCHECK(ncclIbQpRtr(localQp));
@@ -1055,6 +1059,7 @@ static ncclResult_t ncclIbReceiverQpsCreateToRts(ncclIbRecvComm* rComm, struct n
     rtrAttr->remoteLid = remDevInfo->lid;
     rtrAttr->remoteGid = remDevInfo->gid;
     rtrAttr->localIbPort = remDevInfo->ib_port;
+    rtrAttr->localPortFlags = ibDev->portAttr.flags;
     rtrAttr->localGid = rCommDev->base.gidInfo.localGid;
     rtrAttr->localGidIndex = rCommDev->base.gidInfo.localGidIndex;
     NCCLCHECK(ncclIbQpRtr(localQp));
@@ -1122,6 +1127,7 @@ static ncclResult_t ncclIbReceiverQpsCreateToRts(ncclIbRecvComm* rComm, struct n
       rtrAttr->remoteLid = ibDev->portAttr.lid;
       rtrAttr->remoteGid = rCommDev->base.gidInfo.localGid;
       rtrAttr->localIbPort = ibDev->portNum;
+      rtrAttr->localPortFlags = ibDev->portAttr.flags;
       rtrAttr->localGid = rCommDev->base.gidInfo.localGid;
       rtrAttr->localGidIndex = rCommDev->base.gidInfo.localGidIndex;
       NCCLCHECK(ncclIbQpRtr(flushQp));

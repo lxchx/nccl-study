@@ -230,10 +230,10 @@ ncclResult_t ncclGinIbConnect(void *ctx, void *handles[], int nranks, int rank,
   do
   {
     if (cComm->sendComm == NULL) {
-      NCCLCHECK(ncclNetIb.connect(ctx, lComm->dev, handles[next], &cComm->sendComm, NULL));
+      NCCLCHECK(ncclIbConnectImpl(ctx, lComm->dev, handles[next], &cComm->sendComm, NULL, /*nQpsPerDev*/ 1));
     }
     if (cComm->recvComm == NULL)
-      NCCLCHECK(ncclNetIb.accept(lComm, &cComm->recvComm, NULL));
+      NCCLCHECK(ncclIbAcceptImpl(lComm, &cComm->recvComm, NULL, /*nQpsPerDev*/ 1));
   } while (cComm->sendComm == NULL || cComm->recvComm == NULL);
 
   cComm->getProperties = (ncclResult_t(*)(int dev, void *props))ncclIbGetProperties;
@@ -439,9 +439,9 @@ ncclResult_t ncclGinIbProxyCreateContext(void* collComm, ncclGinConfig_v13_t* co
       int acceptPeer = (cComm->rank - i + nranks) % nranks;
       do {
         if (gc->fullSendComm[connectPeer] == NULL)
-          NCCLCHECKGOTO(ncclNetIb.connect(cComm->ctx, cComm->dev, handles+NCCL_NET_HANDLE_MAXSIZE*connectPeer, &gc->fullSendComm[connectPeer], NULL), ret, end);
+          NCCLCHECKGOTO(ncclIbConnectImpl(cComm->ctx, cComm->dev, handles+NCCL_NET_HANDLE_MAXSIZE*connectPeer, &gc->fullSendComm[connectPeer], NULL, /*nQpsPerDev*/ 1), ret, end);
         if (gc->fullRecvComm[acceptPeer] == NULL)
-          NCCLCHECKGOTO(ncclNetIb.accept(lComm, &gc->fullRecvComm[acceptPeer], NULL), ret, end);
+          NCCLCHECKGOTO(ncclIbAcceptImpl(lComm, &gc->fullRecvComm[acceptPeer], NULL, /*nQpsPerDev*/ 1), ret, end);
       } while ((gc->fullSendComm[connectPeer] == NULL) ||
           (gc->fullRecvComm[acceptPeer] == NULL));
       NCCLCHECKGOTO(ncclGinIbP2PBarrier(cComm), ret, end);

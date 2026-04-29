@@ -645,7 +645,7 @@ void ncclIbSetTrafficClass(void* ctx, int trafficClass) {
   if (config) config->trafficClass = trafficClass;
 }
 
-ncclResult_t ncclIbConnect(void* ctx, int dev, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** /*sendDevComm*/) {
+ncclResult_t ncclIbConnectImpl(void* ctx, int dev, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** /*sendDevComm*/, int nQpsPerDev) {
   ncclResult_t ret = ncclSuccess;
   struct ncclIbHandle* handle = (struct ncclIbHandle*) opaqueHandle;
   struct ncclIbCommStage* stage = &handle->stage;
@@ -725,8 +725,8 @@ ib_recv_dev_list:
   mergedDev = ncclIbMergedDevs + dev;
   comm->base.vProps = mergedDev->vProps;
   int localNqps, remoteNqps;
-  localNqps  = ncclParamIbQpsPerConn() * comm->base.vProps.ndevs; // We must have at least 1 qp per-device
-  remoteNqps = ncclParamIbQpsPerConn() * remoteVProps.ndevs;
+  localNqps  = nQpsPerDev * comm->base.vProps.ndevs; // We must have at least 1 qp per-device
+  remoteNqps = nQpsPerDev * remoteVProps.ndevs;
   comm->base.nqps = remoteNqps > localNqps ? remoteNqps : localNqps; // Select max nqps (local or remote)
 
   comm->base.nDataQps = std::max(comm->base.vProps.ndevs, remoteVProps.ndevs);
@@ -740,7 +740,7 @@ ib_recv_dev_list:
   // Sender's CQ size needs to accomodate the upper bound of number of send
   // requests multiplied by the number of QPs used per request.
   int cqSize;
-  cqSize = NET_IB_MAX_REQUESTS*ncclParamIbQpsPerConn();
+  cqSize = NET_IB_MAX_REQUESTS*nQpsPerDev;
   for (int i = 0; i < comm->base.vProps.ndevs; i++) {
     int ibDevN = comm->base.vProps.devs[i];
     if (comm->base.resiliency) {
@@ -898,6 +898,10 @@ exit:
 fail:
   free(comm);
   goto exit;
+}
+
+ncclResult_t ncclIbConnect(void* ctx, int dev, void* opaqueHandle, void** sendComm, ncclNetDeviceHandle_t** sendDevComm) {
+  return ncclIbConnectImpl(ctx, dev, opaqueHandle, sendComm, sendDevComm, ncclParamIbQpsPerConn());
 }
 
 NCCL_PARAM(IbWarnRailLocal, "IB_WARN_RAIL_LOCAL", 0);
@@ -1157,7 +1161,7 @@ ncclResult_t ncclIbReceiverPrePostReceiveWorkRequests(struct ncclIbRecvComm* rec
 
 NCCL_PARAM(IbGdrFlushDisable, "GDR_FLUSH_DISABLE", 0);
 
-ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle_t** /*recvDevComm*/) {
+ncclResult_t ncclIbAcceptImpl(void* listenComm, void** recvComm, ncclNetDeviceHandle_t** /*recvDevComm*/, int nQpsPerDev) {
   ncclResult_t ret = ncclSuccess;
   struct ncclIbListenComm* lComm = (struct ncclIbListenComm*)listenComm;
   struct ncclIbCommStage* stage = lComm->stage;
@@ -1222,8 +1226,8 @@ ib_recv_dev_list:
   rComm->base.vProps = mergedDev->vProps;
   memcpy(stage->buffer, &rComm->base.vProps, sizeof(ncclNetVDeviceProps_t));
   int localNqps, remoteNqps;
-  localNqps  = ncclParamIbQpsPerConn() * rComm->base.vProps.ndevs; // We must have at least 1 qp per-device
-  remoteNqps = ncclParamIbQpsPerConn() * remoteVProps.ndevs;
+  localNqps  = nQpsPerDev * rComm->base.vProps.ndevs; // We must have at least 1 qp per-device
+  remoteNqps = nQpsPerDev * remoteVProps.ndevs;
   rComm->base.nqps = remoteNqps > localNqps ? remoteNqps : localNqps; // Select max nqps (local or remote)
 
   rComm->base.nDataQps = std::max(rComm->base.vProps.ndevs, remoteVProps.ndevs);
@@ -1277,7 +1281,7 @@ ib_recv:
   // up to 2 completions (one for the CTS message and one for the completion
   // of a receive request) per QP, in the worst case.
   int cqSize;
-  cqSize = 2*NET_IB_MAX_REQUESTS*ncclParamIbQpsPerConn();
+  cqSize = 2*NET_IB_MAX_REQUESTS*nQpsPerDev;
   for (int i = 0; i < rComm->base.vProps.ndevs; i++) {
     rCommDev = rComm->devs + i;
     ibDevN = rComm->base.vProps.devs[i];
@@ -1407,6 +1411,10 @@ exit:
 fail:
   free(rComm);
   goto exit;
+}
+
+ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle_t** recvDevComm) {
+  return ncclIbAcceptImpl(listenComm, recvComm, recvDevComm, ncclParamIbQpsPerConn());
 }
 
 ncclResult_t ncclIbCloseSend(void* sendComm) {

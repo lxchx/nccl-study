@@ -76,16 +76,17 @@ ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
 }
 
 ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]) {
+  ncclResult_t firstError = ncclSuccess;
   for (int i = 0; i < 2; i++) {
     if (pair[i] != NCCL_COMM_PAIR_INVALID) {
-      if (closesocket(pair[i]) == SOCKET_ERROR) {
+      if (closesocket(pair[i]) == SOCKET_ERROR && firstError == ncclSuccess) {
         WARN("Failed to close socket: %d", WSAGetLastError());
-        return ncclSystemError;
+        firstError = ncclSystemError;
       }
       pair[i] = NCCL_COMM_PAIR_INVALID;
     }
   }
-  return ncclSuccess;
+  return firstError;
 }
 
 ncclResult_t ncclOsCommPairWrite(ncclCommPairDescriptor descriptor, const void* buf, size_t len, size_t* written) {

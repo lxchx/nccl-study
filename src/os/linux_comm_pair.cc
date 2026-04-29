@@ -18,13 +18,17 @@ ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
 }
 
 ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]) {
+  ncclResult_t firstError = ncclSuccess;
   for (int i = 0; i < 2; i++) {
     if (pair[i] != NCCL_COMM_PAIR_INVALID) {
-      SYSCHECK(close(pair[i]), "close");
+      if (close(pair[i]) == -1 && firstError == ncclSuccess) {
+        WARN("close failed: %s", strerror(errno));
+        firstError = ncclSystemError;
+      }
       pair[i] = NCCL_COMM_PAIR_INVALID;
     }
   }
-  return ncclSuccess;
+  return firstError;
 }
 
 ncclResult_t ncclOsCommPairWrite(ncclCommPairDescriptor descriptor, const void* buf, size_t len, size_t* written) {

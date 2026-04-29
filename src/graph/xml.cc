@@ -836,7 +836,6 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
         NCCLCHECKGOTO(ncclTopoGetXmlFromCpu(parent, xml), ret, exit);
       }
     }
-    INFO(NCCL_INIT, "ncclTopoGetXmlFromSys: Attaching PCI node to parent");
     pciNode->parent = parent;
     // Keep PCI sub devices ordered by PCI Bus ID (Issue #820)
     // Coverity complains about dereferenced parent being NULL

@@ -50,19 +50,20 @@
  *   - Signals apply only to remote peers: remote PUT (gin.put) uses ncclGin_SignalInc on the
  *     destination rank, so waitSignal counts inbound signaled PUTs from remote
  *     (non-LSA) peers only (numRemotePeers = nRanks - lsa.nRanks per round). LSA
- *     stores do not increment this counter—bar.sync orders LSA with inbound GIN.
+ *     stores do not increment this counter—an explicit LSA sub-barrier orders
+ *     the LSA path.
  *   - Phase 1: gin.waitSignal waits until every remote peer has finished PUT of its
  *     partial contribution for token_idx (this rank and block's token) into this
  *     rank's window_recv. Same-node peers use LSA stores into recv instead (no signal);
- *     bar.sync after wait + flush aligns the team so all LSA and GIN contributions are
- *     ordered before reduction.
+ *     bar.lsaBarrier().sync(acq_rel) after wait + flush publishes local LSA stores
+ *     and acquires same-node peers' LSA stores before reduction.
  *   - Phase 3: second wait until every remote peer has finished signaled PUT for
  *     all-gather into this rank's window_send; LSA copies are fenced by barriers.
  *   - gin.flush completes outbound GIN operations locally so window_send / window_recv
  *     regions used as PUT sources can be safely reused (LSA paths unaffected).
- *   - World-team bar.sync (acquire at kernel entry; release after Phase 1 wait/flush
- *     and before Phase 3; ncclGinFenceLevel::Relaxed) aligns ranks and orders
- *     visibility for LSA stores, GIN data, and Phase 2 outputs.
+ *   - World-team bar.sync (acquire at kernel entry; release before Phase 3;
+ *     ncclGinFenceLevel::Relaxed) aligns cross-node phases. The Phase 1 reduction
+ *     consumes data after remote GIN signal waits and the LSA sub-barrier.
  *   - Signal thresholds accumulate across phases (no reset); each phase adds
  *     numRemotePeers remote SignalIncs to this block's signalIndex.
  *
@@ -128,8 +129,8 @@ __global__ void RMSNormHybrid(ncclWindow_t window_send, ncclWindow_t window_recv
   //     window_recv (numRemotePeers increments only—LSA peers are not in this count).
   //   - gin.flush: complete outbound GIN PUTs locally so window_send slices used as
   //     Phase 1 PUT sources can be safely reused.
-  //   - bar.sync(release): world-team barrier orders LSA stores with inbound GIN data
-  //     before reduction loads.
+  //   - bar.lsaBarrier().sync(acq_rel): publish this rank's LSA stores and acquire
+  //     same-node peers' LSA stores before reduction loads.
   //----------------------------------------------------------------------------
 
   size_t my_window_offset = (token_idx * hidden_dim) * sizeof(float);
@@ -171,8 +172,9 @@ __global__ void RMSNormHybrid(ncclWindow_t window_send, ncclWindow_t window_recv
   // Flush outbound GIN Phase 1 PUTs so window_send sources are safe to reuse.
   gin.flush(coop);
 
-  // World barrier: collective alignment + ordering of LSA writes with inbound GIN data
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  // LSA sub-barrier: publish our same-node stores and acquire peer same-node stores.
+  // Remote GIN contributions are covered by the waitSignal above.
+  bar.lsaBarrier().sync(coop, cuda::memory_order_acq_rel);
 
   //----------------------------------------------------------------------------
   // Reduction: Sum contributions from all peers

@@ -57,8 +57,8 @@
  *     window_recv—one remote SignalInc per peer before we reduce.
  *   - Phase 3: the second wait is the same idea for all-gather: every peer has finished
  *     PUT of the normalized slice this block needs from them into this rank's window_send.
- *   - ncclGinBarrierSession (world team): acquire at kernel entry; cuda::memory_order_release
- *     after Phase 1 and before Phase 3 for collective alignment and memory ordering.
+ *   - ncclGinBarrierSession (world team): acquire at kernel entry; release before
+ *     Phase 3 and after Phase 3 for collective phase ordering.
  *   - Signal values accumulate across phases (no reset between phases)
  *
  * Parameters:
@@ -101,8 +101,8 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   // (1) Exchange: for each peer, a PUT (gin.put) sends this rank's partial for the slice
   //     that peer needs; symmetrically we receive every peer's contribution for
   //     token_idx into window_recv (strided layout).
-  // (2) After waitSignal, gin.flush ensures our Phase 1 PUT sources in window_send are
-  //     safe to reuse; bar.sync(release) then aligns all ranks before reduction.
+  // (2) waitSignal waits for inbound signaled PUT payloads before reduction.
+  //     gin.flush ensures our Phase 1 PUT sources in window_send are safe to reuse.
   //
   // Receive layout (peer-major in each rank's window): for peer p = 0..nRanks-1,
   // the H*B floats for that peer are [token0][token1]...[token_{B-1}], each token
@@ -115,8 +115,7 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   // Synchronization: gin.waitSignal(signalValue + nRanks) waits until all peers have
   // finished PUT of their partial contribution for token_idx—the token this rank and
   // block own—into this rank's window_recv (each peer's PUT carries SignalInc on this
-  // signalIndex, so the local counter rises by nRanks). bar.sync(release) then aligns
-  // the world team before reduction loads.
+  // signalIndex, so the local counter rises by nRanks).
   //----------------------------------------------------------------------------
 
   size_t my_window_offset = (token_idx * hidden_dim) * sizeof(float);
@@ -137,9 +136,6 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   // Flush completes our outbound Phase 1 PUTs locally so window_send regions used as
   // PUT sources can be safely reused by subsequent operations on this rank.
   gin.flush(coop);
-
-  // Release: ensure all remote writes to window_recv are visible before reduction
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
 
   //----------------------------------------------------------------------------
   // Reduction: Sum contributions from all peers

@@ -258,8 +258,8 @@ The `ncclDevCommRequirements` structure specifies which resources each kernel ne
 | Requirement | Value | Purpose |
 |-------------|-------|---------|
 | `ginConnectionType` | `NCCL_GIN_CONNECTION_FULL` | Enables GIN for remote peer PUT |
-| `barrierCount` | `tokens_per_gpu` | One hybrid world barrier per block; `ncclBarrierSession` with `ncclTeamTagWorld` and `ncclGin` for `bar.sync` (not a separate `lsaBarrierCount`) |
-| `ginSignalCount` | `tokens_per_gpu` | One signal per block; counts inbound signaled PUTs from **remote** peers only (LSA peers use `bar.sync`; local peers use LSA) |
+| `barrierCount` | `tokens_per_gpu` | One hybrid barrier per block; `ncclBarrierSession` with `ncclTeamTagWorld` and `ncclGin` provides both `bar.sync` and `bar.lsaBarrier()` (not a separate `lsaBarrierCount`) |
+| `ginSignalCount` | `tokens_per_gpu` | One signal per block; counts inbound signaled PUTs from **remote** peers only (LSA peers do not signal) |
 
 **Notes:**
 - All examples (01–04) use `ncclCommQueryProperties` to verify requirements before proceeding. All require Device API support.
@@ -553,7 +553,7 @@ NCCLCHECK(ncclDevCommCreate(comm, &reqs, &devComm));
 
 ##### Phase 1: Reduce-Scatter via GPU-Initiated Networking (GIN) PUT
 
-In pure GIN, **each thread block is responsible for a single token** on this rank. Block `blockIdx.x` owns global token index `token_idx = rank * gridDim.x + blockIdx.x`. Phase 1 has two logical steps for that block: **(1)** exchange—each rank issues **PUTs** (`gin.put`) to every rank in the communicator, **including itself**, so each rank’s receive window gets the partials it needs; for this block, **every rank’s contribution for `token_idx`** lands in this rank’s `window_recv`. **(2)** **reduce**—`gin.waitSignal` blocks until **all ranks** have finished those **signaled** **PUTs** for `token_idx`; `gin.flush` then completes **outbound** GIN work locally so **`window_send` regions used as PUT sources** are safe to reuse; `bar.sync(..., cuda::memory_order_release, ...)` aligns the world team before the reduction loop consumes `window_recv`.
+In pure GIN, **each thread block is responsible for a single token** on this rank. Block `blockIdx.x` owns global token index `token_idx = rank * gridDim.x + blockIdx.x`. Phase 1 has two logical steps for that block: **(1)** exchange—each rank issues **PUTs** (`gin.put`) to every rank in the communicator, **including itself**, so each rank’s receive window gets the partials it needs; for this block, **every rank’s contribution for `token_idx`** lands in this rank’s `window_recv`. **(2)** **reduce**—`gin.waitSignal` blocks until **all ranks** have finished those **signaled** **PUTs** for `token_idx`, and `gin.flush` completes **outbound** GIN work locally so **`window_send` regions used as PUT sources** are safe to reuse.
 
 **PUT pattern:** For each rank `peer` in the communicator, each **PUT** (`gin.put`) sends **this rank’s** partial activations for the token that **that rank** will own at the same block index—`peer_token_idx = peer * gridDim.x + blockIdx.x`—from `window_send` at `peer_token_idx`, into that rank’s `window_recv` at the offset for `token_idx`. This includes the self case (`peer == rank`) for a uniform code path and matching signal accounting. Symmetrically, this rank receives each rank’s contribution for `token_idx` into its own `window_recv`. The strided receive layout lines up with the per-block reduction that follows.
 
@@ -591,9 +591,6 @@ for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
 gin.waitSignal(coop, signalIndex, signalValue + devComm.nRanks);
 // Flush outbound Phase 1 PUTs so window_send regions used as sources are safe to reuse.
 gin.flush(coop);
-
-// Release: world-team barrier before reduction loads
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
 
 //----------------------------------------------------------------------------
 // Reduction: Sum contributions from all peers
@@ -634,7 +631,7 @@ for (int peer = 1; peer < nRanks; peer++) {
 - **`signalIndex = blockIdx.x`**: Each token block uses its own signal slot so different blocks in the same kernel do not share one counter.
 - **`gin.readSignal(signalIndex)`** before Phase 1: Captures the baseline `signalValue` for this slot immediately before this block issues any **PUT** (`gin.put`) in the current launch. Later waits are expressed relative to that baseline.
 - **`ncclGin_SignalInc{signalIndex}`** on each **PUT** (`gin.put`): **Remote action** on the **peer**: their **PUT** **to you** atomically increments **this rank's** signal `signalIndex` when the transfer is ordered per the API. So **your** counter rises once per peer that issues such a **PUT** with that signal (not when **you** finish sending to them).
-- **After Phase 1**: `gin.waitSignal(..., signalValue + nRanks)` waits until **each** peer has completed one signaled **PUT** with its partial for **`token_idx`** (this rank and block’s token) **into this rank's** `window_recv`. **`bar.sync(..., cuda::memory_order_release, ncclGinFenceLevel::Relaxed)`** then participates in the world-team barrier before reduction loads.
+- **After Phase 1**: `gin.waitSignal(..., signalValue + nRanks)` waits until **each** peer has completed one signaled **PUT** with its partial for **`token_idx`** (this rank and block’s token) **into this rank's** `window_recv`.
 - **Phase 3**: Issues another **nRanks** outbound **PUTs** (`gin.put`) with `ncclGin_SignalInc{signalIndex}`; peers’ signals rise as they receive. The per-block signal is **not** reset. **`gin.waitSignal(..., signalValue + 2 * nRanks)`** waits until **each** peer has completed the signaled Phase 3 **PUT** into **this** rank’s `window_send` (all-gather inbound round).
 - **`gin.flush`**: After each wait, completes **this rank’s** outbound GIN operations so **`window_send`** (Phase 1) and **`window_recv`** (Phase 3) regions used as **PUT sources** can be safely reused; barriers still order cross-rank phases.
 
@@ -687,7 +684,8 @@ bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
 ```
 
 **Synchronization Strategy:**
-- **Initial barrier** (`cuda::memory_order_acquire`, `ncclGinFenceLevel::Relaxed`): Before Phase 1, ensures visibility of setup before issuing **PUTs** (`gin.put`) and consuming receive-buffer state. **`waitSignal`** accounts for **inbound** signaled **PUTs** for **`token_idx`**; **`flush`** finishes **outbound** GIN so **PUT sources** are reusable; a **`cuda::memory_order_release`** barrier after that pair aligns the world team before reduction loads.
+- **Initial barrier** (`cuda::memory_order_acquire`, `ncclGinFenceLevel::Relaxed`): Before Phase 1, aligns the per-block signal baseline before issuing **PUTs** (`gin.put`).
+- **Phase 1 signal/flush**: **`waitSignal`** accounts for **inbound** signaled **PUTs** for **`token_idx`**; **`flush`** finishes **outbound** GIN so **PUT sources** are reusable.
 - **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::Relaxed`): Participates in the world-team barrier so each rank **releases** its Phase 2 stores before any rank starts Phase 3 **PUTs**; keeps cross-GPU phase ordering consistent with cumulative GIN signals.
 - **Signal accumulation (ties to `readSignal` / `waitSignal` above)**: The per-block counter is not reset between Phase 1 and Phase 3. After Phase 1 **`waitSignal`**, the signal has advanced by `nRanks` from the baseline (one **inbound** signaled **PUT** per peer for **`token_idx`**). After Phase 3 **`waitSignal`**, by another `nRanks` (second **inbound** all-gather round), so the final threshold is `signalValue + 2 * nRanks`.
 - **Barrier after Phase 3** (`cuda::memory_order_release`): World-team barrier so all ranks finish Phase 3 (GIN + visibility) before the kernel returns.
@@ -771,7 +769,7 @@ This in-place reduction strategy:
 This example demonstrates fused computation and communication using a hybrid approach that combines both Load Store Accessible (LSA) for intra-node communication and GPU-Initiated Networking (GIN) for inter-node communication. This pattern is ideal for multi-node systems where GPUs within a node can leverage fast NVLink (LSA) while communicating across nodes via GIN.
 
 **Key Features:**
-- Uses `ncclBarrierSession` with `ncclTeamTagWorld()` and `ncclGin` for world-team barriers (`bar.sync` with `cuda::memory_order_acquire` / `cuda::memory_order_release` and `ncclGinFenceLevel::Relaxed`; pairs with `barrierCount` on the host)
+- Uses `ncclBarrierSession` with `ncclTeamTagWorld()` and `ncclGin` for world-team barriers (`bar.sync`) and the LSA sub-barrier (`bar.lsaBarrier()`); both pair with `barrierCount` on the host
 - Leverages `ncclGetLsaPointer` for local peer memory access within the same node
 - Issues remote **PUT** to peers on other nodes via `gin.put()`
 - Optimally selects communication mechanism based on peer location
@@ -805,7 +803,9 @@ NCCLCHECK(ncclDevCommCreate(comm, &reqs, &devComm));
 
 ##### Phase 1: Reduce-Scatter via Hybrid LSA/GIN
 
-The same block/token mapping, offsets (`token_idx`, `peer_token_idx`), and in-place reduction as the pure GIN example apply here; see that section for the layout. **Transport is split by peer kind:** **PUT** (`gin.put`) with **`SignalInc`** goes only to **remote** (non-LSA) peers. **LSA** peers get the same logical data via **stores** (no signal). **`gin.waitSignal(signalValue + numRemotePeers)`** therefore waits only until **every remote peer** has finished its signaled **PUT** with its partial for **`token_idx`** into this rank’s `window_recv`; **`gin.flush`** completes **outbound** GIN so **`window_send`** Phase 1 sources are reusable. **`bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed)`** then orders **LSA** stores with that **inbound GIN** data before reduction.
+The same block/token mapping, offsets (`token_idx`, `peer_token_idx`), and in-place reduction as the pure GIN example apply here; see that section for the layout. **Transport is split by peer kind:** **PUT** (`gin.put`) with **`SignalInc`** goes only to **remote** (non-LSA) peers. **LSA** peers get the same logical data via **stores** (no signal). **`gin.waitSignal(signalValue + numRemotePeers)`** therefore waits only until **every remote peer** has finished its signaled **PUT** with its partial for **`token_idx`** into this rank’s `window_recv`; **`gin.flush`** completes **outbound** GIN so **`window_send`** Phase 1 sources are reusable.
+
+For same-node LSA peers, **`bar.lsaBarrier().sync(coop, cuda::memory_order_acq_rel)`** then publishes this rank’s LSA stores and acquires same-node peers’ LSA stores before reduction.
 
 ```cuda
 ncclCoopCta coop = ncclCoopCta();
@@ -869,8 +869,9 @@ gin.waitSignal(coop, signalIndex, signalValue + numRemotePeers);
 // Flush outbound GIN Phase 1 PUTs so window_send sources are safe to reuse.
 gin.flush(coop);
 
-// World barrier: collective alignment + ordering of LSA writes with inbound GIN data
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+// LSA sub-barrier: publish our same-node stores and acquire peer same-node stores.
+// Remote GIN contributions are covered by the waitSignal above.
+bar.lsaBarrier().sync(coop, cuda::memory_order_acq_rel);
 
 //----------------------------------------------------------------------------
 // Reduction: Sum contributions from all peers
@@ -895,14 +896,14 @@ for (int peer = 1; peer < nRanks; peer++) {
 
 - **Dual Communication Paths**:
   - **Remote Peers** (outside LSA team): Use **PUT** (`gin.put`) with signal-based synchronization
-  - **Local Peers** (within LSA team): Use direct LSA memory writes (no remote **PUT**); ordering with the remote path uses world `bar.sync` after the Phase 1 GIN wait
+  - **Local Peers** (within LSA team): Use direct LSA memory writes (no remote **PUT**); visibility before reduction uses the LSA sub-barrier after the Phase 1 GIN wait
 
 - **Synchronization Strategy**:
   - `gin.waitSignal(..., signalValue + numRemotePeers)` after Phase 1: **Remote peers only**—each must finish one signaled **PUT** with its partial for **`token_idx`** into this rank’s `window_recv`. The counter rises by `numRemotePeers`, not `nRanks`; LSA does not increment it.
   - `gin.flush` after Phase 1 (and Phase 3): Completes **outbound** GIN locally so **`window_send`** / **`window_recv`** slices used as **PUT sources** can be reused.
   - `gin.waitSignal(..., signalValue + 2 * numRemotePeers)` after Phase 3: Second **remote-only** inbound round (all-gather GIN into `window_send`); LSA Phase 3 copies are fenced by `bar.sync`, not signals.
-  - `bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed)` after the Phase 1 wait/flush: World-team hybrid barrier so **LSA** stores and **inbound GIN** are ordered before reduction.
-  - Together, remote **signal** waits, **`flush`**, and world **`bar.sync`** guarantee all contributions (remote GIN + local LSA) are available before reduction and before kernel exit.
+  - `bar.lsaBarrier().sync(coop, cuda::memory_order_acq_rel)` after the Phase 1 wait/flush: LSA-only synchronization so same-node stores are both published and acquired before reduction.
+  - Together, remote **signal** waits, **`flush`**, and the LSA sub-barrier guarantee all contributions (remote GIN + local LSA) are available before reduction; the later world `bar.sync` calls order cross-node phases.
 
 **Communication Pattern:**
 - Each GPU classifies its peers into local (LSA) and remote (GIN) groups
@@ -910,12 +911,13 @@ for (int peer = 1; peer < nRanks; peer++) {
 - Local peers: Perform direct LSA memory writes
 - Signal counting tracks only remote operations (`numRemotePeers` instead of `nRanks`)
 - Data is placed in the receive window in the same strided layout as the pure GIN example
-- Hybrid synchronization ensures both local and remote data is visible before reduction
+- Remote signal waits cover remote GIN contributions; the LSA sub-barrier covers same-node stores before reduction
 
 **Hybrid GIN signals (per thread block):**
 - **`signalIndex`** and baseline **`gin.readSignal(signalIndex)`** behave like the pure GIN example: one signal slot per `blockIdx.x`, and `signalValue` is sampled before any **PUT** (`gin.put`) in this block.
-- **Only remote PUT** (`gin.put`) uses `ncclGin_SignalInc{signalIndex}` as a **remote** action, so it increments **the destination rank's** signal when the **PUT** is ordered. **LSA copies do not** touch that counter—local peers are ordered via `bar.sync`.
-- **After Phase 1**: `gin.waitSignal(..., signalValue + numRemotePeers)` waits until every **remote** peer has completed one signaled **PUT** with its contribution for **`token_idx`** **into this rank's** `window_recv` (`numRemotePeers` increments only). **`gin.flush`** then reuses **`window_send`** sources used for outbound **PUTs**. **`bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed)`** orders **LSA** writes with **inbound GIN** before reduction.
+- **Only remote PUT** (`gin.put`) uses `ncclGin_SignalInc{signalIndex}` as a **remote** action, so it increments **the destination rank's** signal when the **PUT** is ordered. **LSA copies do not** touch that counter—local peers are ordered via the LSA sub-barrier.
+- **After Phase 1 remote GIN**: `gin.waitSignal(..., signalValue + numRemotePeers)` waits until every **remote** peer has completed one signaled **PUT** with its contribution for **`token_idx`** **into this rank's** `window_recv` (`numRemotePeers` increments only). **`gin.flush`** then reuses **`window_send`** sources used for outbound **PUTs**.
+- **After Phase 1 local LSA**: **`bar.lsaBarrier().sync(coop, cuda::memory_order_acq_rel)`** publishes and acquires **LSA** writes before reduction.
 - **Phase 3**: Another `numRemotePeers` remote **PUTs** (`gin.put`) with `SignalInc`; final **`waitSignal(..., signalValue + 2 * numRemotePeers)`** waits for the **remote** all-gather round into **`window_send`**. **`flush`** consumes Phase 3 **`window_recv`** sources used for outbound **PUTs**. LSA broadcast is fenced by **`bar.sync`**, not signals.
 
 ##### Phase 2: RMS Normalization
@@ -979,7 +981,7 @@ bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
 
 **Hybrid Synchronization Strategy:**
 - **Initial barrier** (`cuda::memory_order_acquire`): Before Phase 1, ensures visibility of setup before reading/writing peer data.
-- **GIN signal after Phase 1** (**remote only**): `waitSignal` on `signalValue + numRemotePeers` until every remote peer has completed its **PUT** for its partial for **`token_idx`**; **`flush`** for outbound GIN source reuse; then **`bar.sync(..., release, ...)`** so **LSA** and **inbound GIN** are ordered before reduction.
+- **GIN signal after Phase 1** (**remote only**): `waitSignal` on `signalValue + numRemotePeers` until every remote peer has completed its **PUT** for its partial for **`token_idx`**; **`flush`** for outbound GIN source reuse; then **`bar.lsaBarrier().sync(..., acq_rel)`** so local LSA stores are visible before reduction.
 - **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::Relaxed`): Each rank releases its Phase 2 stores before any rank starts Phase 3; keeps cross-GPU phase ordering consistent with cumulative **remote** GIN signals.
 - **GIN signal after Phase 3** (**remote only**): `waitSignal` on `signalValue + 2 * numRemotePeers`; **`flush`** after; LSA Phase 3 copies fenced by **`bar.sync`**.
 - **Barrier after Phase 3** (`cuda::memory_order_release`): World-team barrier so all ranks finish Phase 3 (GIN + LSA + visibility) before kernel exit.
@@ -1011,7 +1013,7 @@ The memory layout and reduction strategy follow the same pattern as the pure GIN
 
 **Trade-offs:**
 - **Code Complexity**: More complex than pure LSA or pure GIN implementations
-- **Synchronization Overhead**: Requires GIN signal waits plus world `bar.sync` (hybrid GIN/LSA barrier session)
+- **Synchronization Overhead**: Requires GIN signal waits, an LSA sub-barrier after Phase 1, and world `bar.sync` for cross-phase ordering
 - **Memory Requirements**: Two windows required (like GIN), not the single window of LSA
 
 **When to Use Hybrid vs Pure Approaches:**

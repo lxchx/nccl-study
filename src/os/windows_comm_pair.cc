@@ -75,10 +75,15 @@ ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
   return ncclSuccess;
 }
 
-ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor descriptor) {
-  if (closesocket(descriptor) == SOCKET_ERROR) {
-    WARN("Failed to close socket: %d", WSAGetLastError());
-    return ncclSystemError;
+ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]) {
+  for (int i = 0; i < 2; i++) {
+    if (pair[i] != NCCL_COMM_PAIR_INVALID) {
+      if (closesocket(pair[i]) == SOCKET_ERROR) {
+        WARN("Failed to close socket: %d", WSAGetLastError());
+        return ncclSystemError;
+      }
+      pair[i] = NCCL_COMM_PAIR_INVALID;
+    }
   }
   return ncclSuccess;
 }

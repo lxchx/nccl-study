@@ -17,8 +17,13 @@ ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
   return ncclSuccess;
 }
 
-ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor descriptor) {
-  SYSCHECK(close(descriptor), "close");
+ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]) {
+  for (int i = 0; i < 2; i++) {
+    if (pair[i] != NCCL_COMM_PAIR_INVALID) {
+      SYSCHECK(close(pair[i]), "close");
+      pair[i] = NCCL_COMM_PAIR_INVALID;
+    }
+  }
   return ncclSuccess;
 }
 

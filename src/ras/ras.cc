@@ -138,10 +138,7 @@ ncclResult_t ncclRasCommInit(struct ncclComm* comm, struct rasRankInit* myRank) 
 exit:
   return ret;
 fail:
-  if (ncclOsCommPairIsValid(rasNotificationPipe[1]))
-    (void)ncclOsCommPairClose(rasNotificationPipe[1]);
-  if (ncclOsCommPairIsValid(rasNotificationPipe[0]))
-    (void)ncclOsCommPairClose(rasNotificationPipe[0]);
+  (void)ncclOsCommPairClose(rasNotificationPipe);
   (void)close(rasClientListeningSocket);
   (void)ncclSocketClose(&rasNetListeningSocket);
   goto exit;
@@ -247,10 +244,8 @@ static void rasThreadCleanup() {
 
   {
     std::lock_guard<std::mutex> lock(rasInitMutex);
-    (void)ncclOsCommPairClose(rasNotificationPipe[1]);
-    (void)ncclOsCommPairClose(rasNotificationPipe[0]);
+    (void)ncclOsCommPairClose(rasNotificationPipe);
     // rasClientListeningSocket is taken care of by rasClientSupportTerminate().
-    rasNotificationPipe[0] = rasNotificationPipe[1] = NCCL_COMM_PAIR_INVALID;
     (void)ncclSocketClose(&rasNetListeningSocket);
     rasInitRefCount = 0;
     rasInitialized = false;

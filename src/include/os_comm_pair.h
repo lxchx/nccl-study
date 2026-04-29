@@ -26,9 +26,11 @@ typedef ncclSocketDescriptor ncclCommPairDescriptor;
 // Returns ncclSuccess on success, error code on failure
 ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]);
 
-// Closes a communication pair descriptor
+// Closes both endpoints of a communication pair
+// Skips any descriptor that is already NCCL_COMM_PAIR_INVALID
+// Resets both descriptors to NCCL_COMM_PAIR_INVALID after closing
 // Returns ncclSuccess on success, error code on failure
-ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor descriptor);
+ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]);
 
 // Writes data to the communication pair
 // Returns ncclSuccess on success, error code on failure
@@ -41,10 +43,5 @@ ncclResult_t ncclOsCommPairWrite(ncclCommPairDescriptor descriptor, const void* 
 // On success, *nread contains the number of bytes read (may be less than len; 0 indicates EOF)
 // Callers must loop to ensure all expected data is read
 ncclResult_t ncclOsCommPairRead(ncclCommPairDescriptor descriptor, void* buf, size_t len, size_t* nread);
-
-// Checks if a descriptor is valid
-static inline bool ncclOsCommPairIsValid(ncclCommPairDescriptor descriptor) {
-  return descriptor != NCCL_COMM_PAIR_INVALID;
-}
 
 #endif // NCCL_OS_COMM_PAIR_H_

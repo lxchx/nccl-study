@@ -29,6 +29,7 @@ NCCL_PARAM(WinStride, "WIN_STRIDE", -1);
 NCCL_PARAM(EnableVersionCheck, "ENABLE_VERSION_CHECK", 1);
 NCCL_PARAM(ElasticBufferRegister, "ELASTIC_BUFFER_REGISTER", 1);
 NCCL_PARAM(SymReuseSysmemHandles, "SYM_REUSE_SYSMEM_HANDLES", 0);
+NCCL_PARAM(RMADisable, "RMA_DISABLE", 0);
 
 extern struct ncclDevCommCompat ncclDevCommCompat_v22902, ncclDevCommCompat_v22907, ncclDevCommCompat_v23000;
 
@@ -714,7 +715,7 @@ static ncclResult_t symMemoryObtain(
 
   // ginEnabled is set in ncclDevrCommCreateInternal, which might not be called for RMA proxy
   // so we introduce rmaProxyEnabled to track if RMA proxy is enabled
-  devr->rmaProxyEnabled = devr->nLsaTeams > 1 && comm->config.numRmaCtx > 0 && comm->globalRmaProxySupport;
+  devr->rmaProxyEnabled = devr->nLsaTeams > 1 && comm->config.numRmaCtx > 0 && comm->globalRmaProxySupport && !ncclParamRMADisable();
   if (devr->rmaProxyEnabled && mem->maxGlobalNumSegments == 1) {
     NCCLCHECKGOTO(symMemoryRegisterRma(comm, mem), ret, fail_mem_space_teams);
   }

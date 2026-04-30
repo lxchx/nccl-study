@@ -238,6 +238,8 @@ ncclResult_t ncclGinDevCommSetup(struct ncclComm* comm, struct ncclDevCommRequir
 
   devComm->ginSignalCount = reqs->ginSignalCount;
   devComm->ginCounterCount = reqs->ginCounterCount;
+  // Legacy signals default to what is specified in DevCommRequirements
+  devComm->ginStrongLegacySignals = reqs->ginStrongSignalsRequired;
 
   // Allocate contexts
   int nContextsTotal = reqs->ginContextCount;

@@ -192,10 +192,11 @@ NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor
 #endif
 
 #if NCCL_CHECK_CUDACC
-NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_SignalInc arg) {
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_SignalInc arg) {
   ncclGinSignalDescriptor desc{};
   desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
   desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = net.comm.ginStrongLegacySignals;
   return desc;
 }
 NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_SignalInc) { return ncclGinSignalInc; }
@@ -203,16 +204,63 @@ NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_SignalInc) 
 #endif
 
 #if NCCL_CHECK_CUDACC
-NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_SignalAdd arg) {
+NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_StrongSignalInc arg) {
   ncclGinSignalDescriptor desc{};
   desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
   desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = true;
   return desc;
 }
-NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_SignalAdd) {
-  return ncclGinSignalAdd;
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_StrongSignalInc) { return ncclGinSignalInc; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_StrongSignalInc) { return 1; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_WeakSignalInc arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
+  desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = false;
+  return desc;
 }
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_WeakSignalInc) { return ncclGinSignalInc; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_WeakSignalInc) { return 1; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_SignalAdd arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
+  desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = net.comm.ginStrongLegacySignals;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_SignalAdd) { return ncclGinSignalAdd; }
 NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_SignalAdd arg) { return arg.value; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_StrongSignalAdd arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
+  desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = true;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_StrongSignalAdd) { return ncclGinSignalAdd; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_StrongSignalAdd arg) { return arg.value; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE constexpr ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_WeakSignalAdd arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_INDEXED;
+  desc.indexedSignal.signalId = arg.signal;
+  desc.isStrong = false;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_WeakSignalAdd) { return ncclGinSignalAdd; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_WeakSignalAdd arg) { return arg.value; }
 #endif
 
 #if NCCL_CHECK_CUDACC
@@ -222,12 +270,39 @@ NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin c
   desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
   desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
   desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = net.comm.ginStrongLegacySignals;
   return desc;
 }
-NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_VASignalInc arg) {
-  return ncclGinSignalInc;
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_VASignalInc) { return ncclGinSignalInc; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_VASignalInc) { return 1; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_StrongVASignalInc arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_VA;
+  desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
+  desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
+  desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = true;
+  return desc;
 }
-NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_VASignalInc arg) { return 1; }
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_StrongVASignalInc) { return ncclGinSignalInc; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_StrongVASignalInc) { return 1; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_WeakVASignalInc arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_VA;
+  desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
+  desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
+  desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = false;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_WeakVASignalInc) { return ncclGinSignalInc; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_WeakVASignalInc) { return 1; }
 #endif
 
 #if NCCL_CHECK_CUDACC
@@ -237,12 +312,39 @@ NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin c
   desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
   desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
   desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = net.comm.ginStrongLegacySignals;
   return desc;
 }
-NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_VASignalAdd arg) {
-  return ncclGinSignalAdd;
-}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_VASignalAdd) { return ncclGinSignalAdd; }
 NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_VASignalAdd arg) { return arg.value; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_StrongVASignalAdd arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_VA;
+  desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
+  desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
+  desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = true;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_StrongVASignalAdd) { return ncclGinSignalAdd; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_StrongVASignalAdd arg) { return arg.value; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE ncclGinSignalDescriptor ncclGin_getSignalDescriptor(ncclGin const& net, ncclGin_WeakVASignalAdd arg) {
+  ncclGinSignalDescriptor desc{};
+  desc.type = NCCL_GIN_SIGNAL_TYPE_VA;
+  desc.vaSignal.signalWindow = nccl::gin::internal::getGinWindow(arg.signalWindow, net.connectionId);
+  desc.vaSignal.signalOffset = nccl::gin::internal::windowOffsetToGinOffset(arg.signalWindow, arg.signalOffset);
+  desc.vaSignal.ncclWindow = arg.signalWindow;
+  desc.isStrong = false;
+  return desc;
+}
+NCCL_DEVICE_INLINE constexpr ncclGinSignalOp_t ncclGin_getSignalOp(ncclGin_WeakVASignalAdd) { return ncclGinSignalAdd; }
+NCCL_DEVICE_INLINE constexpr uint64_t ncclGin_getSignalOpArg(ncclGin_WeakVASignalAdd arg) { return arg.value; }
 #endif
 
 
@@ -259,6 +361,11 @@ NCCL_DEVICE_INLINE constexpr ncclGinCounter_t ncclGin_getCounterId(ncclGin const
 #if NCCL_CHECK_CUDACC
 NCCL_DEVICE_INLINE constexpr bool ncclGin_isCounter(ncclGin_CounterInc) { return true; }
 NCCL_DEVICE_INLINE constexpr ncclGinCounter_t ncclGin_getCounterId(ncclGin const& net, ncclGin_CounterInc arg) { return arg.counter; }
+#endif
+
+#if NCCL_CHECK_CUDACC
+NCCL_DEVICE_INLINE constexpr bool ncclGin_isCounter(ncclGin_WeakCounterInc) { return true; }
+NCCL_DEVICE_INLINE constexpr ncclGinCounter_t ncclGin_getCounterId(ncclGin const& net, ncclGin_WeakCounterInc arg) { return arg.counter; }
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////

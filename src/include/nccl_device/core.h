@@ -103,6 +103,10 @@ struct ncclDevCommRequirements {
   int ginTrafficClass;
 
   int worldGinBarrierCount;
+
+  // Set to false if GIN strong signals will not be needed by the kernels using this devComm (defaults to true).
+  // When false, the use of GIN strong signals results in undefined behavior.
+  bool ginStrongSignalsRequired;
 };
 
 #define NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER {                               \
@@ -126,6 +130,7 @@ struct ncclDevCommRequirements {
     0,                                           /* ginQueueDepth */           \
     NCCL_CONFIG_UNDEF_INT,                       /* ginTrafficClass */         \
     0,                                           /* worldGinBarrierCount */    \
+    true,                                        /* ginStrongSignalsRequired */ \
 }
 
 struct ncclDevResourceRequirements {

@@ -51,6 +51,7 @@ struct ncclDevComm {
   uint64_t* ginSignalShadows;
   uint32_t ginContextCount;
   bool ginIsRailed; // Whether the GIN connections are railed
+  bool ginStrongLegacySignals;
 
   // FT related
   uint32_t* abortFlag;

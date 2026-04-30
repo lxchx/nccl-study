@@ -95,6 +95,7 @@ struct ncclGinSignalDescriptor {
       ncclGinSignal_t signalId;
     } indexedSignal;
   };
+  bool isStrong;
 };
 
 #if NCCL_CHECK_CUDACC

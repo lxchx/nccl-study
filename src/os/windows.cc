@@ -141,6 +141,15 @@ void ncclOsSetEnv(const char* name, const char* value) {
   }
 }
 
+char* ncclOsStrSep(char** stringp, const char* delim) {
+  if (*stringp == NULL) return NULL;
+  char* start = *stringp;
+  char* found = strpbrk(start, delim);
+  if (found) { *found = '\0'; *stringp = found + 1; }
+  else       { *stringp = NULL; }
+  return start;
+}
+
 ncclResult_t ncclOsInitialize() {
   // Windows Winsock initialization
   WSADATA wsaData;

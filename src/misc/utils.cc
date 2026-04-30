@@ -199,34 +199,29 @@ uint64_t getPidHash(void) {
 int parseStringList(const char* string, struct netIf* ifList, int maxList) {
   if (!string) return 0;
 
-  const char* ptr = string;
+  char* str = strdup(string);
+  if (!str) return 0;
 
   int ifNum = 0;
-  int ifC = 0;
-  char c;
-  do {
-    c = *ptr;
-    if (c == ':') {
-      if (ifC > 0) {
-        ifList[ifNum].prefix[ifC] = '\0';
-        ifList[ifNum].port = atoi(ptr+1);
-        ifNum++; ifC = 0;
-      }
-      while (c != ',' && c != '\0') c = *(++ptr);
-    } else if (c == ',' || c == '\0') {
-      if (ifC > 0) {
-        ifList[ifNum].prefix[ifC] = '\0';
-        ifList[ifNum].port = -1;
-        ifNum++; ifC = 0;
-      }
-    } else {
-      if (ifC < sizeof(ifList[ifNum].prefix) - 1) {
-        ifList[ifNum].prefix[ifC] = c;
-        ifC++;
-      }
+  char* savePtr = NULL;
+  char* entry = strtok_r(str, ",", &savePtr);
+  while (entry != NULL && ifNum < maxList) {
+    char* c = entry;
+    char* tok = ncclOsStrSep(&c, ":");
+    if (tok && tok[0] != '\0') {
+      snprintf(ifList[ifNum].prefix, sizeof(ifList[ifNum].prefix), "%s", tok);
+      // port, rail, and plane will default to -1 if absent or empty
+      tok = ncclOsStrSep(&c, ":");
+      ifList[ifNum].port  = (tok && tok[0] != '\0') ? atoi(tok) : -1;
+      tok = ncclOsStrSep(&c, ":");
+      ifList[ifNum].rail  = (tok && tok[0] != '\0') ? atoi(tok) : -1;
+      tok = ncclOsStrSep(&c, ":");
+      ifList[ifNum].plane = (tok && tok[0] != '\0') ? atoi(tok) : -1;
+      ifNum++;
     }
-    ptr++;
-  } while (ifNum < maxList && c);
+    entry = strtok_r(NULL, ",", &savePtr);
+  }
+  free(str);
   return ifNum;
 }
 
@@ -244,13 +239,14 @@ static bool matchPort(const int port1, const int port2) {
 }
 
 
-bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact) {
+bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact, int* ifId) {
   // Make an exception for the case where no user list is defined
+  if (ifId) *ifId = -1;
   if (listSize == 0) return true;
 
   for (int i=0; i<listSize; i++) {
-    if (matchIf(string, ifList[i].prefix, matchExact)
-        && matchPort(port, ifList[i].port)) {
+    if (matchIf(string, ifList[i].prefix, matchExact) && matchPort(port, ifList[i].port)) {
+      if (ifId) *ifId = i;
       return true;
     }
   }

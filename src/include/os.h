@@ -40,6 +40,7 @@ void ncclOsAlignedFree(void* ptr);
 std::tm* ncclOsLocaltime(const time_t* timer, std::tm* buf);
 
 void ncclOsSetEnv(const char* name, const char* value);
+char* ncclOsStrSep(char** stringp, const char* delim);
 
 /* Dynamic library loading */
 typedef void* ncclOsLibraryHandle;

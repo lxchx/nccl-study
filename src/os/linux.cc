@@ -107,6 +107,10 @@ void ncclOsSetEnv(const char* name, const char* value) {
   setenv(name, value, 0);
 }
 
+char* ncclOsStrSep(char** stringp, const char* delim) {
+  return strsep(stringp, delim);
+}
+
 char* ncclOsRealpath(const char* path, char* resolved_path) {
   return realpath(path, resolved_path);
 }

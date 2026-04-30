@@ -46,10 +46,12 @@ ncclResult_t getRandomData(void* buffer, size_t bytes);
 struct netIf {
   char prefix[64];
   int port;
+  int16_t rail;
+  int16_t plane;
 };
 
 int parseStringList(const char* string, struct netIf* ifList, int maxList);
-bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact);
+bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact, int* ifId = NULL);
 
 static long log2i(long n) {
   return log2Down(n);

@@ -96,6 +96,8 @@ struct alignas(64) ncclIbDev {
   struct ibv_port_attr portAttr;
   struct ncclIbStats stats;
   int dmaBufSupported;
+  int16_t railId;
+  int16_t planeId;
   enum ncclIbProvider ibProvider;
   union {
     struct {

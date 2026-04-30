@@ -3,10 +3,11 @@
 #
 # See LICENSE.txt for more license information
 
-"""
-NCCL constants and enums.
+"""NCCL constants and Python-only enums.
 
-This module centralizes all NCCL constants for easy access and organization.
+This module centralizes Python-only NCCL constants and flag enums that wrap
+#define constants from the NCCL C headers. C-defined enums are re-exported
+from nccl.core.typing.
 """
 
 from enum import IntEnum, IntFlag
@@ -30,20 +31,19 @@ NCCL_UNDEF_FLOAT: float = -1.0
 
 # Communicator split constants
 NCCL_SPLIT_NOCOLOR: int = -1
-"""Color value for ncclCommSplit to indicate rank will not be part of any group."""
+"""Color value for ncclCommSplit to indicate the rank will not be part of any group."""
 
 # NCCL magic number
 NCCL_MAGIC: int = 0xCAFEBEEF
-"""magic number for NCCL structs."""
+"""Magic number for NCCL configuration structs (used for ABI validation)."""
 
 
 # CTA (Cooperative Thread Array) Policy flags
 class CTAPolicy(IntFlag):
-    """
-    NCCL performance policy for CTA scheduling.
+    """NCCL performance policy for CTA scheduling.
 
-    Policies can be combined with ``|`` so that NCCL can use different
-    scheduling in various cases.
+    Policies can be combined with the bitwise OR operator so that NCCL can
+    use different scheduling in different cases.
     """
 
     Default = 0x00
@@ -56,9 +56,7 @@ class CTAPolicy(IntFlag):
 
 # Communicator shrink flags
 class CommShrinkFlag(IntEnum):
-    """
-    Flags for ncclCommShrink behavior.
-    """
+    """Flags for ncclCommShrink behavior."""
 
     Default = 0x00
     """Shrink the parent communicator."""
@@ -68,9 +66,7 @@ class CommShrinkFlag(IntEnum):
 
 # Communicator suspend flags
 class CommSuspendFlag(IntFlag):
-    """
-    Flags for ncclCommSuspend behavior.
-    """
+    """Flags for ncclCommSuspend behavior."""
 
     Mem = 0x01
     """Suspend memory (release dynamic GPU memory allocations)."""
@@ -78,9 +74,7 @@ class CommSuspendFlag(IntFlag):
 
 # Window registration flags
 class WindowFlag(IntFlag):
-    """
-    Flags for window registration.
-    """
+    """Flags for window registration."""
 
     Default = 0x00
     """Default window registration."""

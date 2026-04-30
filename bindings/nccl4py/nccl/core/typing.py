@@ -3,8 +3,7 @@
 #
 # See LICENSE.txt for more license information
 
-"""
-Type definitions, protocols, and type aliases for NCCL4Py.
+"""Type definitions, protocols, and type aliases for NCCL4Py.
 
 This module defines all type specifications used throughout NCCL4Py including
 data types, reduction operators, buffer specifications, and protocol classes
@@ -71,6 +70,14 @@ _DeviceID: TypeAlias = int
 
 
 class NcclInvalid(Exception):
+    """Raised when an argument provided to an NCCL4Py API is invalid.
+
+    Used for argument validation errors that the Python layer detects before
+    forwarding the call to NCCL (e.g. unsupported dtype, mismatched buffer
+    counts, wrong device). Errors raised by NCCL itself are reported as
+    NCCLError from the bindings layer.
+    """
+
     def __init__(self, msg):
         self.msg = msg
         super().__init__(msg)
@@ -83,7 +90,27 @@ class NcclInvalid(Exception):
 
 
 class NcclDataType:
+    """NCCL data type wrapper.
+
+    Wraps an NCCL data type value and provides interoperation with NumPy
+    dtypes and convenience accessors for the type's byte size and name. May
+    be constructed from an integer value, an NCCL DataType enum value, or a
+    NumPy dtype.
+    """
+
     def __init__(self, datatype: int | _np.dtype):
+        """Initializes an NcclDataType.
+
+        Args:
+            datatype: An integer value, an NCCL DataType enum value, or a
+                NumPy dtype. NumPy dtypes are mapped by name first (for
+                ml-dtypes like bfloat16, float8_e4m3fn, float8_e5m2) and
+                then by (kind, itemsize) for standard types.
+
+        Raises:
+            NcclInvalid: If the dtype has no NCCL equivalent or the integer
+                value is not a valid NCCL data type.
+        """
         if isinstance(datatype, _np.dtype):
             # First try name-based mapping for ml-dtypes (has higher priority)
             _name_mapping = {
@@ -132,55 +159,33 @@ class NcclDataType:
         return f"NcclDataType({self._datatype.name})"
 
     def __eq__(self, other: object) -> bool:
-        """
-        Compares two NcclDataType instances for equality.
-
-        Returns:
-            ``bool``: True if data types are equal.
-        """
         if not isinstance(other, NcclDataType):
             return NotImplemented
         return self._datatype == other._datatype
 
     def __hash__(self) -> int:
-        """
-        Makes NcclDataType hashable.
-
-        Returns:
-            ``int``: Hash value.
-        """
         return hash(self._datatype)
 
     @property
     def value(self) -> int:
-        """
-        Integer value of the NCCL data type.
-
-        Returns:
-            ``int``: Data type value.
-        """
+        """Integer value of the NCCL data type."""
         return int(self._datatype)
 
     @property
     def name(self) -> str:
-        """
-        Name of the NCCL data type.
-
-        Returns:
-            ``str``: Data type name (e.g., "Float32", "Int64").
-        """
+        """Name of the NCCL data type (e.g. 'Float32', 'Int64')."""
         return self._datatype.name
 
     @property
     def itemsize(self) -> int:
-        """
-        Size in bytes of this data type.
+        """Size in bytes of a single element of this data type.
 
         Returns:
-            ``int``: Byte size (1, 2, 4, or 8).
+            Byte size: 1 for 8-bit types, 2 for 16-bit, 4 for 32-bit, 8 for
+            64-bit.
 
         Raises:
-            - ``NcclInvalid``: If data type is unsupported.
+            NcclInvalid: If the data type has no byte size mapping.
         """
         if self._datatype in [
             DataType.Int8,
@@ -209,14 +214,15 @@ class NcclDataType:
 
     @property
     def numpy_dtype(self) -> _np.dtype:
-        """
-        NumPy dtype corresponding to this NCCL data type.
+        """Equivalent NumPy dtype for this NCCL data type.
 
         Returns:
-            ``np.dtype``: Equivalent NumPy data type.
+            NumPy dtype corresponding to this NCCL data type. For bfloat16
+            and the float8 variants, ml-dtypes must be installed.
 
         Raises:
-            - ``NcclInvalid``: If data type is unsupported.
+            NcclInvalid: If the data type has no NumPy mapping, or if
+                ml-dtypes is required but not installed.
         """
         # Mapping from NCCL DataType to numpy dtype string
         _dtype_to_numpy = {
@@ -281,24 +287,22 @@ FLOAT8E5M2 = NcclDataType(DataType.Float8e5m2)
 
 
 class NcclRedOp:
-    """
-    NCCL reduction operator wrapper with validation.
+    """NCCL reduction operator wrapper with validation.
 
-    Wraps NCCL reduction operator values and validates them against
-    the built-in operators (Sum, Prod, Max, Min, Avg).
+    Wraps an NCCL reduction operator value and validates it against the
+    built-in operators (Sum, Prod, Max, Min, Avg).
     """
 
     def __init__(self, value: int):
-        """
-        Initializes NcclRedOp with validation.
+        """Initializes an NcclRedOp with validation.
 
         Args:
-            - value (int): Integer value of the reduction operator.
+            value: Integer value of the reduction operator.
 
         Raises:
-            - ``NcclInvalid``: If the reduction operator value is invalid.
+            NcclInvalid: If the reduction operator value is not a valid NCCL
+                reduction operator.
         """
-        # Validate that the value corresponds to a valid reduction operator
         try:
             self._redop_value = RedOp(value)
         except Exception:
@@ -317,22 +321,12 @@ class NcclRedOp:
 
     @property
     def value(self) -> int:
-        """
-        Integer value of the reduction operator.
-
-        Returns:
-            ``int``: Operator value.
-        """
+        """Integer value of the reduction operator."""
         return int(self._redop_value)
 
     @property
     def name(self) -> str:
-        """
-        Gets the name of the reduction operator.
-
-        Returns:
-            ``str``: Operator name (e.g., "Sum", "Max").
-        """
+        """Name of the reduction operator (e.g. 'Sum', 'Max')."""
         return self._redop_value.name
 
 
@@ -344,11 +338,15 @@ AVG = NcclRedOp(RedOp.Avg)
 
 
 class SupportsDLPack(Protocol):
+    """Protocol for objects implementing the DLPack data interchange protocol."""
+
     def __dlpack__(self, /, *, stream: Any | None = None) -> _PyCapsule: ...
     def __dlpack_device__(self) -> tuple[_DeviceType, _DeviceID]: ...
 
 
 class SupportsCAI(Protocol):
+    """Protocol for objects implementing the CUDA Array Interface."""
+
     @property
     def __cuda_array_interface__(self) -> dict[str, Any]: ...
 

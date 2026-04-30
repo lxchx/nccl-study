@@ -3,8 +3,7 @@
 #
 # See LICENSE.txt for more license information
 
-"""
-NCCL group operations for batching collective communications.
+"""NCCL group operations for batching collective communications.
 
 This module provides APIs for grouping multiple NCCL operations together to enable
 efficient batching and overlapping of communication operations. Group calls allow
@@ -27,17 +26,15 @@ __all__ = ["GroupSimInfo", "group_start", "group_end", "group_simulate_end", "gr
 
 
 class GroupSimInfo:
-    """
-    Information for NCCL group operation simulation.
+    """Information for NCCL group operation simulation.
 
-    This class holds simulation information that can be used to estimate
-    the performance of group operations without actually executing them.
+    Holds simulation information that can be used to estimate the performance
+    of group operations without actually executing them. Pass an instance to
+    group_simulate_end and read estimated_time after the call.
     """
 
     def __init__(self) -> None:
-        """
-        Initializes group simulation info with default values.
-        """
+        """Initializes group simulation info with default values."""
         self._sim_info = _nccl_bindings.SimInfo()
 
         # Apply NCCL_SIM_INFO_INITIALIZER defaults
@@ -48,64 +45,57 @@ class GroupSimInfo:
 
     @property
     def ptr(self) -> int:
-        """
-        Raw NCCL simulation info pointer.
-
-        Returns:
-            ``int``: The simulation info pointer.
-        """
+        """Raw NCCL simulation info pointer."""
         return int(self._sim_info.ptr)
 
     # Field proxies
     @property
     def estimated_time(self) -> float:
-        """
-        Estimated execution time for the group operations (in seconds).
-
-        Returns:
-            ``float``: Estimated time in seconds.
-        """
+        """Estimated execution time for the group operations, in seconds."""
         return self._sim_info.estimated_time
 
 
 def group_start() -> None:
-    """
-    Starts a group of NCCL operations.
+    """Starts a group of NCCL operations.
 
-    All NCCL operations called after this will be batched together
-    and executed when group_end() is called. This can improve
-    performance by allowing NCCL to optimize the operation sequence.
+    All NCCL operations called after this will be batched together and
+    executed when :py:func:`group_end` is called. This can improve performance
+    by allowing NCCL to optimize the operation sequence.
 
     See Also:
+        :py:func:`group`, and the NCCL ncclGroupStart reference:
         https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/group.html#ncclgroupstart
     """
     return _nccl_bindings.group_start()
 
 
 def group_end() -> None:
-    """
-    Ends a group of NCCL operations.
+    """Ends a group of NCCL operations.
 
-    Executes all operations that were queued since the last group_start().
-    This must be called to actually perform the batched operations.
+    Executes all operations that were queued since the last
+    :py:func:`group_start`. Must be called to actually perform the batched
+    operations.
 
     See Also:
+        :py:func:`group`, and the NCCL ncclGroupEnd reference:
         https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/group.html#ncclgroupend
     """
     return _nccl_bindings.group_end()
 
 
 def group_simulate_end(sim_info: GroupSimInfo | None) -> None:
-    """
-    Simulates the end of a group of NCCL operations.
+    """Simulates the end of a group of NCCL operations.
 
-    This estimates the execution time of the queued operations without
-    actually executing them. The estimated time is stored in sim_info.
+    Estimates the execution time of the queued operations without actually
+    executing them. The estimated time is stored in
+    :py:attr:`GroupSimInfo.estimated_time`.
 
     Args:
-        - sim_info (GroupSimInfo, optional): Simulation info object to store estimated time, or None.
+        sim_info: Simulation info object to store estimated time, or None to
+            discard the result.
 
     See Also:
+        NCCL ncclGroupSimulateEnd reference:
         https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/group.html#ncclgroupsimulateend
     """
     if sim_info is None:
@@ -115,14 +105,11 @@ def group_simulate_end(sim_info: GroupSimInfo | None) -> None:
 
 @contextlib.contextmanager
 def group() -> Generator[None, None, None]:
-    """
-    Context manager for NCCL group operations.
+    """Context manager for NCCL group operations.
 
-    Automatically calls group_start() on entry and group_end() on exit.
-    This ensures proper cleanup even if an exception occurs.
-
-    See Also:
-        https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/groups.html
+    Automatically calls :py:func:`group_start` on entry and
+    :py:func:`group_end` on exit, ensuring proper cleanup even if an
+    exception occurs.
     """
     group_start()
     try:

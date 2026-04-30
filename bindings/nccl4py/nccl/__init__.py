@@ -5,8 +5,7 @@
 # See LICENSE.txt for more license information
 #
 
-"""
-NCCL4Py: Python bindings for NVIDIA Collective Communications Library (NCCL).
+"""NCCL4Py: Python bindings for the NVIDIA Collective Communications Library (NCCL).
 
 NCCL4Py provides Pythonic access to NCCL for efficient multi-GPU and multi-node
 communication. It supports all NCCL collective operations, point-to-point

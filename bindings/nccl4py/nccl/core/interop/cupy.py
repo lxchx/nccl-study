@@ -3,8 +3,7 @@
 #
 # See LICENSE.txt for more license information
 
-"""
-CuPy interoperability for NCCL4Py.
+"""CuPy interoperability for NCCL4Py.
 
 This module provides utilities for creating CuPy arrays backed by NCCL-allocated
 memory, enabling zero-copy integration between NCCL operations and CuPy workflows.
@@ -45,24 +44,21 @@ except ImportError:
 
 
 def _to_nccl_dtype(cupy_dtype) -> NcclDataType:
-    """
-    Converts CuPy dtype to NcclDataType.
+    """Converts a CuPy dtype to NcclDataType.
 
-    Note:
-        CuPy dtypes are numpy.dtype objects. This function maps them to
-        global NCCL data type constants.
-
-        ml-dtypes is needed for bfloat16, float8_e4m3fn, float8_e5m2.
+    CuPy dtypes are NumPy dtype objects. For bfloat16, float8_e4m3fn, and
+    float8_e5m2, the optional ml-dtypes package is required.
 
     Args:
-        - cupy_dtype (cupy.dtype): CuPy data type.
+        cupy_dtype: CuPy / NumPy data type to convert.
 
     Returns:
-        ``NcclDataType``: Corresponding NCCL data type (global constant).
+        Corresponding NcclDataType global constant.
 
     Raises:
-        - ``ModuleNotFoundError``: If CuPy is not installed.
-        - ``NcclInvalid``: If cupy_dtype has no NCCL equivalent.
+        ModuleNotFoundError: If CuPy is not installed.
+        NcclInvalid: If the dtype has no NCCL equivalent (e.g. complex,
+            int16, uint16, structured, datetime, or string types).
     """
     if not _cupy_enabled:
         raise ModuleNotFoundError("CuPy is not installed")
@@ -137,22 +133,18 @@ def _to_nccl_dtype(cupy_dtype) -> NcclDataType:
 
 
 def _allocate_nccl_array(shape: tuple[int, ...], dtype: np.dtype, order: str) -> cupy.ndarray:
-    """
-    Allocates NCCL-backed CuPy array with specified parameters.
+    """Allocates an NCCL-backed CuPy array on the current device.
 
     Args:
-        - shape (tuple[int, ...]): Shape of array.
-        - dtype (np.dtype): Data type.
-        - order (str): Memory order ("C" or "F").
+        shape: Shape of the array.
+        dtype: NumPy data type.
+        order: Memory order, 'C' (row-major) or 'F' (column-major).
 
     Returns:
-        ``cupy.ndarray``: Allocated array with NCCL-backed memory.
+        Allocated CuPy array backed by NCCL-managed memory.
 
     Raises:
-        - ``ModuleNotFoundError``: If CuPy is not installed.
-
-    Notes:
-        Uses current CuPy device for allocation.
+        ModuleNotFoundError: If CuPy is not installed.
     """
     if not _cupy_enabled:
         raise ModuleNotFoundError("CuPy is not installed")
@@ -172,29 +164,31 @@ def empty(
     dtype: str | np.dtype | cupy.dtype | type = float,
     order: Literal["C", "F"] = "C",
 ) -> cupy.ndarray:
-    """
-    Creates an uninitialized CuPy array backed by NCCL-allocated memory.
+    """Creates an uninitialized CuPy array backed by NCCL-allocated memory.
 
-    Returns an array filled with uninitialized data using NCCL's memory allocator.
-    This provides a CuPy-compatible interface while using NCCL's memory allocator
-    for efficient GPU memory management in distributed scenarios.
+    Returns an array filled with uninitialized data using NCCL's memory
+    allocator. This provides a CuPy-compatible interface while using NCCL's
+    memory allocator for efficient GPU memory management in distributed
+    scenarios. Unlike cupy.empty, the underlying memory is allocated through
+    NCCL.
+
+    Memory is automatically freed when the array is garbage collected; no
+    explicit free call is required. For zero-copy optimization, register the
+    array using :py:meth:`~nccl.core.Communicator.register_buffer` or
+    :py:meth:`~nccl.core.Communicator.register_window`.
 
     Args:
-        - shape (int | tuple[int, ...]): Dimensionalities of the array.
-        - dtype (str | np.dtype | cupy.dtype | type, optional): Data type specifier. Defaults to float.
-        - order (Literal['C', 'F'], optional): Row-major (C-style) or column-major (Fortran-style) order. Only 'C' and 'F' are supported. Defaults to 'C'.
+        shape: Shape of the array.
+        dtype: Data type specifier. Defaults to float.
+        order: Memory layout. 'C' for row-major (C-style), 'F' for
+            column-major (Fortran-style). Defaults to 'C'.
 
     Returns:
-        ``cupy.ndarray``: An uninitialized CuPy array backed by NCCL-allocated memory.
+        An uninitialized CuPy array backed by NCCL-allocated memory.
 
     Raises:
-        - ``NcclInvalid``: If order is not 'C' or 'F'.
-        - ``ModuleNotFoundError``: If CuPy is not installed.
-
-    Notes:
-        - Unlike ``cupy.empty()``, this allocates memory using NCCL's memory allocator.
-        - For zero-copy optimization, register using ``Communicator.register_buffer()`` or ``Communicator.register_window()``.
-        - Memory is automatically freed when the array is garbage collected. No explicit free call is required.
+        NcclInvalid: If order is not 'C' or 'F'.
+        ModuleNotFoundError: If CuPy is not installed.
     """
     if not _cupy_enabled:
         raise ModuleNotFoundError("CuPy is not installed")
@@ -222,14 +216,19 @@ def empty(
 
 
 def resolve_array(array: cupy.ndarray) -> tuple[int, int, NcclDataType, int]:
-    """
-    Resolves a CuPy array to a tuple of (ptr, count, dtype, device_id).
+    """Resolves a CuPy array to its NCCL buffer descriptor.
 
     Args:
-        - array (cupy.ndarray): CuPy array to resolve.
+        array: CuPy array to resolve.
 
     Returns:
-        ``tuple[int, int, NcclDataType, int]``: Tuple of (ptr, count, dtype, device_id).
+        Tuple of (ptr, count, dtype, device_id): device pointer, element
+        count, NCCL data type, and CUDA device ID.
+
+    Raises:
+        ModuleNotFoundError: If CuPy is not installed.
+        NcclInvalid: If array is not a CuPy ndarray or its dtype has no
+            NCCL equivalent.
     """
     if not _cupy_enabled:
         raise ModuleNotFoundError("CuPy is not installed")

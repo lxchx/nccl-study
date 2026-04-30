@@ -65,7 +65,8 @@ ncclResult_t setLocalGinType(struct ncclComm* comm) {
   ncclNetProperties_t props;
   NCCLCHECK(ginState.ncclGin->getProperties(0, &props));
   if (props.netDeviceType == NCCL_NET_DEVICE_GIN_PROXY ||
-      props.netDeviceType == NCCL_NET_DEVICE_GIN_GDAKI) {
+      props.netDeviceType == NCCL_NET_DEVICE_GIN_GDAKI ||
+      props.netDeviceType == NCCL_NET_DEVICE_GIN_GPI) {
     // NOTE: The following cast is valid because ncclGinType_t variant values
     // should match NCCL_NET_DEVICE_GIN_* values from `enum ncclNetDeviceType`.
     ginState.ginType = static_cast<ncclGinType_t>(props.netDeviceType);
@@ -76,8 +77,8 @@ ncclResult_t setLocalGinType(struct ncclComm* comm) {
     }
     return ncclSuccess;
   }
-  WARN("Cannot get gin type: ncclGin is not null but net device type (%d) is not a gin type",
-       props.netDeviceType);
+  
+  WARN("Cannot get gin type: ncclGin is not null but net device type (%d) is not a gin type", props.netDeviceType);
   return ncclInternalError;
 }
 

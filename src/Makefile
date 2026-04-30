@@ -201,6 +201,11 @@ $(INCDIR)/nccl_device/gin/gdaki/%.h: include/nccl_device/gin/gdaki/%.h
 	mkdir -p $(INCDIR)/nccl_device/gin/gdaki
 	install -m 644 $< $@
 
+$(INCDIR)/nccl_device/gin/gpi/%.h: include/nccl_device/gin/gpi/%.h
+	@printf "Grabbing   %-35s > %s\n" $< $@
+	mkdir -p $(INCDIR)/nccl_device/gin/gpi
+	install -m 644 $< $@
+
 $(INCDIR)/nccl_device/gin/proxy/%.h: include/nccl_device/gin/proxy/%.h
 	@printf "Grabbing   %-35s > %s\n" $< $@
 	mkdir -p $(INCDIR)/nccl_device/gin/proxy

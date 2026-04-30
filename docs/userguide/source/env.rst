@@ -161,17 +161,28 @@ The ``NCCL_IB_HCA`` variable specifies which Host Channel Adapter (RDMA) interfa
 
 Values accepted
 ^^^^^^^^^^^^^^^
-Define to filter IB Verbs interfaces to be used by NCCL. The list is comma-separated; port numbers can be specified using
-the ``:`` symbol. An optional prefix ``^`` indicates the list is an exclude list. A second optional prefix ``=`` indicates
-that the tokens are exact names, otherwise by default NCCL would treat each token as a prefix.
+Define to filter IB Verbs interfaces to be used by NCCL. The list is comma-separated; each entry follows the form
+``<hca>[:<port>[:<rail>[:<plane>]]]``, where fields after ``<hca>`` are optional and separated by the ``:`` symbol.
+An optional prefix ``^`` indicates the list is an exclude list. A second optional prefix ``=`` indicates that the
+tokens are exact names, otherwise by default NCCL would treat each token as a prefix.
+
+When ``<port>`` is omitted, all ports on the HCA are used. If ``<rail>`` or ``<plane>`` is specified while
+``<port>`` is omitted, the ``<port>`` field must still be present as an empty field to preserve field positions.
+For example, ``mlx5_0::0:0`` uses all ports on ``mlx5_0`` with rail 0 and plane 0.
+
+Note: The optional ``<rail>`` and ``<plane>`` fields assign a rail and plane identity to the associated device. Both default to ``-1`` (unassigned) when omitted.
 
 Examples:
 
 ``mlx5`` : Use all ports of all cards starting with ``mlx5``
 
-``=mlx5_0:1,mlx5_1:1`` : Use ports 1 of cards ``mlx5_0`` and ``mlx5_1``.
+``=mlx5_0:1,mlx5_1:1`` : Use ports 1 of cards ``mlx5_0`` and ``mlx5_1``. Rail and plane assignment are both undefined.
 
 ``^=mlx5_1,mlx5_4`` : Do not use cards ``mlx5_1`` and ``mlx5_4``.
+
+``=mlx5_0:1:0:0,mlx5_1:1:0:1`` : Use port 1 on each of ``mlx5_0`` and ``mlx5_1``, assigning both to rail 0 with ``mlx5_0`` on plane 0 and ``mlx5_1`` on plane 1.
+
+``=mlx5_0::0:0,mlx5_1::0:1`` : Use all ports on each of ``mlx5_0`` and ``mlx5_1``, assigning both to rail 0 with ``mlx5_0`` on plane 0 and ``mlx5_1`` on plane 1.
 
 Note: using ``mlx5_1`` without a preceding ``=`` will select ``mlx5_1`` as well as ``mlx5_10`` to ``mlx5_19``, if they exist.
 It is therefore always recommended to add the ``=`` prefix to ensure an exact match.
@@ -1598,6 +1609,20 @@ Enable NCCL to combine dual-port IB NICs into a single logical network device. T
 Values accepted
 ^^^^^^^^^^^^^^^
 Default is 1 (enabled), define and set to 0 to disable NIC merging
+
+NCCL_NET_MERGE_POLICY
+---------------------
+(since 2.30.5)
+
+Controls how NCCL merges physical HCAs into a virtual HCA. The policy works on top of the existing topological distance-based fusion (see NCCL_NET_MERGE_LEVEL); it does not replace the existing distance logic, but can further constrain which candidates are eligible to be merged.
+
+Note: this is specifically intended for rail-optimized systems, where all physical HCAs are equally distant from the GPUs and distance-based logic could inadvertently merge devices from different rails into a single virtual device.
+
+Values accepted
+^^^^^^^^^^^^^^^
+``ALL`` : (Default) Merge all the devices at the given merge level (see NCCL_NET_MERGE_LEVEL) regardless of their rail assignment.
+
+``RAIL`` : Merge only the devices at the given merge level (see NCCL_NET_MERGE_LEVEL) that share the same rail assignment. All devices with undefined rail assignment (``railId == -1``) will not be merged.
 
 NCCL_MNNVL_ENABLE
 -----------------

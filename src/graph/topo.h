@@ -165,6 +165,8 @@ ncclResult_t ncclTopoGetGpuMinPath(struct ncclTopoSystem* system, int type, int*
 ncclResult_t ncclTopoGetGpuMaxPath(struct ncclTopoSystem* system, int type, int* max);
 ncclResult_t ncclTopoSplitNvLink(struct ncclTopoSystem* system, int* splitNvLink);
 
+enum { NCCL_NET_MERGE_POLICY_ALL = 0, NCCL_NET_MERGE_POLICY_RAIL = 1 };
+
 struct ncclTopoNetInfo {
   bool coll;
   bool gin;
@@ -175,6 +177,7 @@ struct ncclTopoNetInfo {
   bool dmaBufSupport;
   // NIC fusion
   int mergeLevel;
+  int mergePolicy;
   const char* forceMerge;
   // dev count tracking functions (not part of ncclNet)
   ncclResult_t (*getDevCount)(int, int*, int*);

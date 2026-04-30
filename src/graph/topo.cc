@@ -1220,8 +1220,8 @@ ncclResult_t ncclTopoAutoMerge(struct ncclXml* xml, struct ncclTopoNetInfo* netI
       // Select each unplaced device "j" which is at most "mergeLevel" distance from "i", but not equal to "i"
       // (Don't merge the same device with itself)
       for (int j = 0; j < nPhysDevs; j++) {
-        if (paths[i*nPhysDevs + j] <= netInfo->mergeLevel &&
-        placedDevs[j] == 0 && j != i) {
+        if ((paths[i * nPhysDevs + j] <= netInfo->mergeLevel) && (placedDevs[j] == 0 && j != i) &&
+            (netInfo->mergePolicy != NCCL_NET_MERGE_POLICY_RAIL || (propsList[i].railId != NCCL_NET_ID_UNDEF && propsList[i].railId == propsList[j].railId))) {
           vProps.devs[vProps.ndevs++] = j;
           placedDevs[j] = 1;
           TRACE(NCCL_GRAPH, "Placed dev %d path=%d", j, paths[i*nPhysDevs + j] );
@@ -1471,7 +1471,7 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     NCCLCHECK(xmlGetAttr(netNode, "gin", &ginAttr));
     NCCLCHECK(xmlGetAttr(netNode, "coll", &colAttr));
     NCCLCHECK(xmlGetAttr(netNode, "keep", &keepAttr));
-    INFO(NCCL_GRAPH, "ncclTopoPopulateNics : Filled %s in topo with pciPath=%s net=%s gin=%s keep=%s coll=%s", props.name, props.pciPath, netAttr, ginAttr, keepAttr, colAttr);
+    INFO(NCCL_GRAPH, "ncclTopoPopulateNics : Filled %s in topo with pciPath=%s net=%s gin=%s keep=%s coll=%s rail=%d plane=%d", props.name, props.pciPath, netAttr, ginAttr, keepAttr, colAttr, props.railId, props.planeId);
   }
 
   return ncclSuccess;
@@ -1538,6 +1538,20 @@ ncclResult_t ncclTopoGetFusionEnv(int* mergeLevel, const char** forceMerge) {
     kvConvertToInt(mergeLevelEnv, mergeLevel, nicPathKvList);
   } else {
     *mergeLevel = PATH_PORT;
+  }
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclTopoGetMergePolicy(int* mergePolicy) {
+  *mergePolicy = NCCL_NET_MERGE_POLICY_ALL;
+  const char* env = ncclGetEnv("NCCL_NET_MERGE_POLICY");
+  if (env) {
+    if (strcasecmp(env, "RAIL") == 0) {
+      *mergePolicy = NCCL_NET_MERGE_POLICY_RAIL;
+      INFO(NCCL_ENV, "NCCL_NET_MERGE_POLICY set by environment to RAIL");
+    } else if (strcasecmp(env, "ALL") != 0) {
+      WARN("NCCL_NET_MERGE_POLICY: unknown value '%s', defaulting to ALL", env);
+    }
   }
   return ncclSuccess;
 }
@@ -1622,6 +1636,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
         netInfo.makeVDevice = comm->ncclCollNet->makeVDevice;
         netInfo.devices = comm->ncclCollNet->devices;
         NCCLCHECK(ncclTopoGetFusionEnv(&netInfo.mergeLevel, &netInfo.forceMerge));
+        NCCLCHECK(ncclTopoGetMergePolicy(&netInfo.mergePolicy));
         NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
       }
 
@@ -1638,6 +1653,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
       netInfo.makeVDevice = comm->ncclNet->makeVDevice;
       netInfo.devices = comm->ncclNet->devices;
       NCCLCHECK(ncclTopoGetFusionEnv(&netInfo.mergeLevel, &netInfo.forceMerge));
+      NCCLCHECK(ncclTopoGetMergePolicy(&netInfo.mergePolicy));
       NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
   }
 

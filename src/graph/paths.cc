@@ -898,7 +898,7 @@ static ncclResult_t ncclTopoGetNchannels(struct ncclComm* comm, int g /*local gp
     if (nNetChannels == NCCL_CONFIG_UNDEF_INT) {
       float netBw = 0.0;
       int netCount = 0;
-      NCCLCHECK(getLocalNetCountByBw(system, g, &netCount, &netBw));
+      NCCLCHECK(ncclTopoGetLocalNetCountByBw(system, g, &netCount, &netBw));
       // We use at least 1 channel per NIC, and more if needed to meet the bw requirement.
       nNetChannels = 2;
       if (netCount > 0) nNetChannels = std::max(netCount, divUp((int)netBw, (int)ncclParamP2pPerChannelNetBw()));

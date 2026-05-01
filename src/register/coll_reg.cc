@@ -9,6 +9,7 @@
 #include "transport.h"
 #include "enqueue.h"
 #include "register_inline.h"
+#include "graph/topo.h"
 
 static ncclResult_t registerCheckP2PConnection(struct ncclComm* comm, struct ncclConnector* conn, struct ncclTopoGraph* graph, int peer, bool* needReg) {
   if (conn->connected) {
@@ -372,7 +373,7 @@ ncclResult_t ncclRegisterCollBuffers(
         info->recvNetHandles = recvNetHandles;
         info->srecvNetHandles = srecvNetHandles;
         if (comm->isOneRPN && (info->func == ncclFuncAllGather || info->func == ncclFuncBroadcast)) {
-          info->nMaxChannels = 1;
+          info->nMaxChannels = std::max(comm->config.minCTAs, std::min(comm->config.maxCTAs, comm->minNetCount));
         }
       } else {
         free(sendNetHandles);

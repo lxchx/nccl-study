@@ -1744,7 +1744,7 @@ ncclResult_t ncclTopoGetLocal(struct ncclTopoSystem* system, int type, int index
   return ncclSuccess;
 }
 
-ncclResult_t getLocalNetCountByBw(struct ncclTopoSystem* system, int gpu, int *count, float* bw) {
+ncclResult_t ncclTopoGetLocalNetCountByBw(struct ncclTopoSystem* system, int gpu, int *count, float* bw) {
   // Assuming BW to CPU reflects the GPU bandwidth via P2P or C2C.
   // Caveat, this could be wrong if there is a PCIe switch, and a narrower link to the CPU.
   int c;

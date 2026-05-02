@@ -199,11 +199,7 @@ __device__  static inline void gpi_gpu_channel_post_gfd_tma(gpi_gpu_channel_t *c
   TmaWait();
 }
 #else 
-#ifdef __CUDA_ARCH__
-#warning "TMA copy is not supported. Using single thread post mode instead."
-#endif
 #define gpi_gpu_channel_post_gfd_tma gpi_gpu_channel_post_gfd_thread
-
 #endif
 /**
  * @brief Post a GFD using a single thread.

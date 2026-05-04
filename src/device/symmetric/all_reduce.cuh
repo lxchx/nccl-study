@@ -27,7 +27,6 @@ static __device__ __forceinline__ void allreduceDeep(
   int lane = t%WARP_SIZE;
   int const& rank = handler.comm.rank;
   int const& nRanks = handler.comm.nRanks;
-  constexpr size_t tilePack = UnrollPacks*WARP_SIZE;
 
   ncclSymPtr<Pack> inpPacks = (ncclSymPtr<Pack>)input + intptr_t(w)*UnrollPacks*WARP_SIZE + (
 #if __CUDA_ARCH__ >= 1000
@@ -49,6 +48,7 @@ static __device__ __forceinline__ void allreduceDeep(
   using tmaSmemStruct_t = tmaSmemStruct<Pack, UnrollPacks, UnrollPeers>;
   constexpr int smemSizePerWarp = ncclTmaShmemScratchWarpSize();
   tmaSmemStruct_t* tmaSmem = reinterpret_cast<tmaSmemStruct_t*>(smemScratch+lw*smemSizePerWarp);
+  constexpr size_t tilePack = UnrollPacks*WARP_SIZE;
   constexpr size_t tileSize = tilePack*BytePerPack;
   size_t tmaSize = 0;
 

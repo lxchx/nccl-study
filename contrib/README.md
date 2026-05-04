@@ -1,30 +1,28 @@
-# contrib/
+# Contribution Policy for `contrib/`
 
 This directory hosts community and partner contributions that extend NCCL with
-new capabilities, algorithms, or higher-level APIs.  The contents here are
-developed and maintained by their respective contributors, not by the NCCL core
-team, and are outside the NCCL release quality bar.
+new capabilities, algorithms, or higher-level APIs.  The content here is
+developed and maintained by its respective contributors, not by the NCCL core
+team, and falls outside the NCCL release quality standards.
 
 ## Purpose
 
 `contrib/` is the right home for additions that:
 
 - Build on top of NCCL's **public** APIs (`nccl.h`, `nccl_device.h`) without
-  modifying NCCL core
+  modifying NCCL core (no change in `src/`)
 - Provide new collective algorithms, higher-level communication APIs, tools,
   or reference implementations
-- Are self-contained and do not require changes to `src/`
 
-Changes to NCCL core (anything under `src/`) are not accepted through
-`contrib/`.  Those follow the standard contribution process described in
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+Changes to NCCL core (anything under `src/`) should follow the standard 
+contribution process described in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Current contributions
 
 | Directory | Description |
 |-----------|-------------|
 | [`custom_algos/`](custom_algos/) | Reference custom collective kernels built on the NCCL Device API |
-| [`nccl_ep/`](nccl_ep/) | NCCL Expert Parallelism (EP) API for MoE dispatch/combine workloads |
+| [`nccl_ep/`](nccl_ep/) | NCCL Expert Parallelism (EP) API for MoE communication (dispatch/combine primitives) |
 
 ## Upstreaming to contrib/
 
@@ -43,9 +41,9 @@ A pull request adding a new `contrib/` entry must satisfy all of the following:
 2. **README** — a `README.md` explaining the purpose, build instructions,
    usage, and any hardware or software prerequisites.
 
-3. **Named maintainer(s)** — a `CODEOWNERS` entry covering the new directory
-   with at least one GitHub user who will be responsible for ongoing
-   maintenance.  The maintainer does not have to be an NCCL team member.
+3. **Named maintainer(s)** — a `## Maintainers` section in the sub-directory's
+   `README.md` listing at least one GitHub username responsible for ongoing
+   maintenance.  The maintainer does not have to be a NCCL team member.
 
 4. **License** — the contribution must be compatible with NCCL's
    [Apache 2.0 license](../LICENSE.txt).  Third-party dependencies must be
@@ -58,7 +56,7 @@ A pull request adding a new `contrib/` entry must satisfy all of the following:
 
 6. **No internal dependency** — code must rely only on NCCL's public headers
    (e.g., `nccl.h`, `nccl_device.h`).  Depending on internal NCCL headers
-   or unexported symbols is not allowed and will break without notice.
+   or unexported symbols is not supported and could break without notice.
 
 ### Review process
 

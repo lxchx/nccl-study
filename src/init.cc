@@ -1607,7 +1607,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   comm->globalRmaProxySupport = globalRmaPluginSupport && globalCrossNicSupport && globalCuMemGdrSupport;
   isOneLsaTeams = ncclDevrIsOneLsaTeam(comm);
   comm->symmetricSupport = comm->isAllCudaP2p && ncclParamWinEnable() && ncclCuMemEnable() && (comm->globalGinSupport != NCCL_GIN_CONNECTION_NONE || isOneLsaTeams);
-  comm->hostRmaSupport = comm->symmetricSupport && (isOneLsaTeams || comm->globalRmaProxySupport);
+  comm->hostRmaSupport = comm->config.numRmaCtx > 0 && comm->symmetricSupport && (isOneLsaTeams || comm->globalRmaProxySupport);
   if (!comm->symmetricSupport) {
     INFO(NCCL_INIT, "Symmetric memory is not supported. cuMemEnable %d, "
       "globalGinSupport %d, cuMemGdrSupport %d", ncclCuMemEnable(), comm->globalGinSupport, globalCuMemGdrSupport);
@@ -1981,10 +1981,13 @@ static ncclResult_t envConfigOverride(ncclComm_t comm) {
 
   numRmaCtxEnv = ncclParamNumRmaCtx();
   if (numRmaCtxEnv != NCCL_CONFIG_UNDEF_INT) {
-    if (numRmaCtxEnv <= 0)
+    if (numRmaCtxEnv < 0) {
       INFO(NCCL_ENV, "NCCL_NUM_RMA_CTX %d is too low, leaving it set at %d", numRmaCtxEnv, comm->config.numRmaCtx);
-    else
+    } else {
+      if (numRmaCtxEnv == 0)
+        INFO(NCCL_ENV, "NCCL_NUM_RMA_CTX=0, RMA disabled for this communicator");
       comm->config.numRmaCtx = numRmaCtxEnv;
+    }
   }
 
   maxP2pPeersEnv = ncclParamMaxP2pPeers();
@@ -2250,7 +2253,7 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
     goto fail;
   }
 
-  if (internalConfigPtr->numRmaCtx != NCCL_CONFIG_UNDEF_INT && internalConfigPtr->numRmaCtx <= 0) {
+  if (internalConfigPtr->numRmaCtx != NCCL_CONFIG_UNDEF_INT && internalConfigPtr->numRmaCtx < 0) {
     WARN("Invalid config numRmaCtx attribute value %d", internalConfigPtr->numRmaCtx);
     ret = ncclInvalidArgument;
     goto fail;

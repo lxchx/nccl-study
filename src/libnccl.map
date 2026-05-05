@@ -2,9 +2,6 @@
     global:
         nccl*;
         pnccl*;
-        extern "C++" {
-            ncclParamNoCacheSet*;
-        };
 
     local:
         *;

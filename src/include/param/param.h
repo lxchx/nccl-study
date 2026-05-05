@@ -36,9 +36,8 @@
 // changed if there is a need.
 #define DEFINE_NCCL_PARAM(name, type, key, default, flags, parser, desc) \
   namespace key_guards { struct guard_##key {}; }; \
-  NCCL_PARAM_COMPILER_EXPORT_SYMBOL extern constexpr char name##Key[] = #key; \
-  NCCL_PARAM_COMPILER_EXPORT_SYMBOL ncclParam<type> name{name##Key, default, parser, \
-                                                         #type, flags, desc};
+  extern constexpr char name##Key[] = #key; \
+  ncclParam<type> name{name##Key, default, parser, #type, flags, desc};
 
 // Usage: USE_NCCL_PARAM(name, type)
 // name and type must match the DEFINE_NCCL_PARAM.

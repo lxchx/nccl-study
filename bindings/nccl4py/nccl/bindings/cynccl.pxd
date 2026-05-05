@@ -72,6 +72,7 @@ ctypedef enum ncclGinType_t "ncclGinType_t":
     NCCL_GIN_TYPE_NONE "NCCL_GIN_TYPE_NONE" = 0
     NCCL_GIN_TYPE_PROXY "NCCL_GIN_TYPE_PROXY" = 2
     NCCL_GIN_TYPE_GDAKI "NCCL_GIN_TYPE_GDAKI" = 3
+    NCCL_GIN_TYPE_GPI "NCCL_GIN_TYPE_GPI" = 4
 
 ctypedef enum ncclGinConnectionType_t "ncclGinConnectionType_t":
     NCCL_GIN_CONNECTION_NONE "NCCL_GIN_CONNECTION_NONE" = 0

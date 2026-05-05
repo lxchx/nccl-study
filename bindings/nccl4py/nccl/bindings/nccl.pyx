@@ -3292,6 +3292,7 @@ class GinType(_IntEnum):
     NONE = NCCL_GIN_TYPE_NONE
     PROXY = NCCL_GIN_TYPE_PROXY
     GDAKI = NCCL_GIN_TYPE_GDAKI
+    GPI = NCCL_GIN_TYPE_GPI
 
 class GinConnectionType(_IntEnum):
     """

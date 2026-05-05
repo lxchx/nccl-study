@@ -141,6 +141,8 @@ class NcclGinType(IntEnum):
     GDAKI = 3
     """GPUDirect Async Kernel-Initiated (GDA-KI). The kernel directly
     issues network operations to the NIC, bypassing the CPU proxy."""
+    GPI = 4
+    """GPU-Initiated networking via the GPI backend."""
 
 
 class NcclGinConnectionType(IntEnum):

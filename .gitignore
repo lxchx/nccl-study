@@ -1,12 +1,14 @@
-# Copyright (c) 2015-2016, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2015-2026, NVIDIA CORPORATION & AFFILIATES. ALL RIGHTS RESERVED.
+#
+# SPDX-License-Identifier: Apache-2.0
 /build*
 failed/
 junits/
 *.xml
-/ext-net/ib_sharp/build/
-/ext-net/example/*.so
-/ext-mixed/example/*.so
-/ext-net/mock/*.so
+/plugins/net/ib_sharp/build/
+/plugins/net/example/*.so
+/plugins/mixed/example/*.so
+/plugins/net/mock/*.so
 *.gcov
 /coverage/
 tags

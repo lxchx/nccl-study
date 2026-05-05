@@ -13,19 +13,12 @@ interfaces for NCCL operations with comprehensive type hints.
 
 from __future__ import annotations
 
+from enum import IntEnum
 from typing import Any, Protocol, TypeAlias
 
 import numpy as _np
 from cuda.core import Buffer, Device, Stream
 from cuda.core.typing import IsStreamT
-
-from nccl.bindings import (
-    DataType,
-    RedOp,
-    GinType as NcclGinType,
-    GinConnectionType as NcclGinConnectionType,
-    CommMemStat as NcclCommMemStat,
-)
 
 __all__ = [
     "NcclDataType",
@@ -89,252 +82,268 @@ class NcclInvalid(Exception):
         return f"<NcclInvalid: {self.msg}>"
 
 
-class NcclDataType:
-    """NCCL data type wrapper.
+###############################################################################
+# Enums (mirror nccl.h)
+###############################################################################
 
-    Wraps an NCCL data type value and provides interoperation with NumPy
-    dtypes and convenience accessors for the type's byte size and name. May
-    be constructed from an integer value, an NCCL DataType enum value, or a
-    NumPy dtype.
+
+class NcclCommMemStat(IntEnum):
+    """Memory-statistic selector, mirroring :c:type:`ncclCommMemStat_t`.
+
+    Used as the ``stat`` argument of :py:meth:`Communicator.get_mem_stat`
+    to identify which memory statistic to query. All values are returned
+    in bytes except :py:attr:`GpuMemSuspended`, which is a 0/1 flag.
     """
 
-    def __init__(self, datatype: int | _np.dtype):
-        """Initializes an NcclDataType.
+    GpuMemSuspend = 0
+    """Communicator-allocated GPU memory that can be released by
+    :py:meth:`Communicator.suspend` (bytes)."""
+    GpuMemSuspended = 1
+    """Whether communicator-allocated GPU memory is currently suspended
+    (``0`` = active, ``1`` = suspended)."""
+    GpuMemPersist = 2
+    """Communicator-allocated GPU memory that cannot be suspended
+    (bytes)."""
+    GpuMemTotal = 3
+    """Total communicator-allocated GPU memory tracked by NCCL (bytes)."""
+
+
+class NcclRedOp(IntEnum):
+    """NCCL reduction operator, mirroring :c:type:`ncclRedOp_t`.
+
+    Used as the ``op`` argument of reduction collectives
+    (:py:meth:`Communicator.allreduce`, :py:meth:`Communicator.reduce`,
+    :py:meth:`Communicator.reduce_scatter`).
+    """
+
+    SUM = 0
+    PROD = 1
+    MAX = 2
+    MIN = 3
+    AVG = 4
+
+
+class NcclGinType(IntEnum):
+    """GIN transport type, mirroring :c:type:`ncclGinType_t`.
+
+    Reported by :py:attr:`Communicator.gin_type` and
+    :py:attr:`Communicator.railed_gin_type` to indicate which device-side
+    network transport, if any, is available on the communicator.
+    ``NONE`` means a device communicator cannot be created with GIN
+    resources.
+    """
+
+    NONE = 0
+    """GIN not available on this communicator."""
+    PROXY = 2
+    """Proxy-based GIN. Network operations issued from a device kernel are
+    relayed through a CPU proxy thread."""
+    GDAKI = 3
+    """GPUDirect Async Kernel-Initiated (GDA-KI). The kernel directly
+    issues network operations to the NIC, bypassing the CPU proxy."""
+
+
+class NcclGinConnectionType(IntEnum):
+    """GIN connection topology, mirroring :c:type:`ncclGinConnectionType_t`.
+
+    Set on the ``gin_connection_type`` field of
+    :py:class:`NCCLDevCommRequirements` before calling
+    :py:meth:`Communicator.create_dev_comm` to declare which peers must be
+    reachable via GIN from device code.
+    """
+
+    NONE = 0
+    """No GIN connection requested."""
+    FULL = 1
+    """Fully connected. Every rank in the communicator must be reachable
+    from every other rank via GIN."""
+    RAIL = 2
+    """Rail-restricted. Ranks must be reachable via GIN only within the
+    same rail (network plane)."""
+
+
+class NcclDataType(IntEnum):
+    """NCCL data type, mirroring :c:type:`ncclDataType_t`.
+
+    Used as the ``dtype`` of buffer specs and as the ``datatype`` argument
+    of NCCL collective operations. Supports conversion to/from NumPy
+    dtypes via :py:meth:`from_numpy_dtype` and :py:attr:`numpy_dtype`.
+    """
+
+    INT8 = 0
+    CHAR = 0  # alias of INT8
+    UINT8 = 1
+    INT32 = 2
+    INT = 2  # alias of INT32
+    UINT32 = 3
+    INT64 = 4
+    UINT64 = 5
+    FLOAT16 = 6
+    HALF = 6  # alias of FLOAT16
+    FLOAT32 = 7
+    FLOAT = 7  # alias of FLOAT32
+    FLOAT64 = 8
+    DOUBLE = 8  # alias of FLOAT64
+    BFLOAT16 = 9
+    FLOAT8E4M3 = 10
+    FLOAT8E5M2 = 11
+
+    @classmethod
+    def _missing_(cls, value):
+        # Anything ``_np.dtype()`` can normalize -- numpy dtype objects,
+        # dtype strings ("float32"), Python type objects (np.float32,
+        # float, bool), etc. -- gets routed through ``from_numpy_dtype``. Plain
+        # integer values that aren't valid members fall through to
+        # IntEnum's default ``ValueError``.
+        try:
+            dtype = _np.dtype(value)
+        except (TypeError, ValueError):
+            return None
+        return cls.from_numpy_dtype(dtype)
+
+    @classmethod
+    def from_numpy_dtype(cls, dtype: _np.dtype) -> "NcclDataType":
+        """Maps a NumPy dtype to its NCCL equivalent.
 
         Args:
-            datatype: An integer value, an NCCL DataType enum value, or a
-                NumPy dtype. NumPy dtypes are mapped by name first (for
-                ml-dtypes like bfloat16, float8_e4m3fn, float8_e5m2) and
-                then by (kind, itemsize) for standard types.
+            dtype: A NumPy dtype. Mapped first by name (for ``ml-dtypes``
+                like ``bfloat16``, ``float8_e4m3fn``, ``float8_e5m2``)
+                and then by ``(kind, itemsize)`` for standard types.
+
+        Returns:
+            Corresponding :py:class:`NcclDataType` member.
 
         Raises:
-            NcclInvalid: If the dtype has no NCCL equivalent or the integer
-                value is not a valid NCCL data type.
+            NcclInvalid: If the dtype has no NCCL equivalent.
         """
-        if isinstance(datatype, _np.dtype):
-            # First try name-based mapping for ml-dtypes (has higher priority)
-            _name_mapping = {
-                "bfloat16": DataType.Bfloat16,
-                "float8_e4m3fn": DataType.Float8e4m3,
-                "float8_e5m2": DataType.Float8e5m2,
-            }
-            if datatype.name in _name_mapping:
-                self._datatype = _name_mapping[datatype.name]
-            else:
-                # Fall back to kind+size mapping for standard NumPy types
-                _mapping = {
-                    ("f", 2): DataType.Float16,
-                    ("f", 4): DataType.Float32,
-                    ("f", 8): DataType.Float64,
-                    ("i", 1): DataType.Int8,
-                    ("i", 4): DataType.Int32,
-                    ("i", 8): DataType.Int64,
-                    ("u", 1): DataType.Uint8,
-                    ("u", 4): DataType.Uint32,
-                    ("u", 8): DataType.Uint64,
-                }
-                kind_size = (datatype.kind, datatype.itemsize)
-                if kind_size in _mapping:
-                    self._datatype = _mapping[kind_size]
-                else:
-                    raise NcclInvalid(
-                        f"Unsupported data type: numpy dtype {datatype} (kind={datatype.kind}, "
-                        f"itemsize={datatype.itemsize}, name={datatype.name}) has no NCCL equivalent"
-                    )
-        else:
-            try:
-                self._datatype = DataType(int(datatype))
-            except Exception:
-                raise NcclInvalid(
-                    f"Unsupported data type: NCCL datatype value {datatype} is invalid"
-                )
-
-    def __int__(self) -> int:
-        return int(self._datatype)
-
-    def __str__(self) -> str:
-        return self._datatype.name
-
-    def __repr__(self) -> str:
-        return f"NcclDataType({self._datatype.name})"
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, NcclDataType):
-            return NotImplemented
-        return self._datatype == other._datatype
-
-    def __hash__(self) -> int:
-        return hash(self._datatype)
-
-    @property
-    def value(self) -> int:
-        """Integer value of the NCCL data type."""
-        return int(self._datatype)
-
-    @property
-    def name(self) -> str:
-        """Name of the NCCL data type (e.g. 'Float32', 'Int64')."""
-        return self._datatype.name
+        dtype = _np.dtype(dtype)
+        # ml-dtypes are matched by name first because they share (kind,
+        # itemsize) with native float types.
+        if dtype.name in _NAME_TO_NCCL:
+            return _NAME_TO_NCCL[dtype.name]
+        kind_size = (dtype.kind, dtype.itemsize)
+        if kind_size in _KIND_SIZE_TO_NCCL:
+            return _KIND_SIZE_TO_NCCL[kind_size]
+        raise NcclInvalid(
+            f"Unsupported data type: numpy dtype {dtype} "
+            f"(kind={dtype.kind}, itemsize={dtype.itemsize}, "
+            f"name={dtype.name}) has no NCCL equivalent"
+        )
 
     @property
     def itemsize(self) -> int:
-        """Size in bytes of a single element of this data type.
-
-        Returns:
-            Byte size: 1 for 8-bit types, 2 for 16-bit, 4 for 32-bit, 8 for
-            64-bit.
-
-        Raises:
-            NcclInvalid: If the data type has no byte size mapping.
-        """
-        if self._datatype in [
-            DataType.Int8,
-            DataType.Char,
-            DataType.Uint8,
-            DataType.Float8e4m3,
-            DataType.Float8e5m2,
-        ]:
-            return 1
-        elif self._datatype in [DataType.Float16, DataType.Half, DataType.Bfloat16]:
-            return 2
-        elif self._datatype in [
-            DataType.Int32,
-            DataType.Int,
-            DataType.Uint32,
-            DataType.Float32,
-            DataType.Float,
-        ]:
-            return 4
-        elif self._datatype in [DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Double]:
-            return 8
-        else:
-            raise NcclInvalid(
-                f"Unsupported data type: NCCL datatype {self._datatype} has no byte size mapping"
-            )
+        """Size in bytes of a single element of this data type."""
+        return _ITEMSIZE[self]
 
     @property
     def numpy_dtype(self) -> _np.dtype:
-        """Equivalent NumPy dtype for this NCCL data type.
+        """Equivalent NumPy dtype.
 
         Returns:
-            NumPy dtype corresponding to this NCCL data type. For bfloat16
-            and the float8 variants, ml-dtypes must be installed.
+            NumPy dtype corresponding to this NCCL data type. For
+            ``BFLOAT16`` and the float8 variants, ``ml-dtypes`` must be
+            installed.
 
         Raises:
-            NcclInvalid: If the data type has no NumPy mapping, or if
-                ml-dtypes is required but not installed.
+            NcclInvalid: If ``ml-dtypes`` is required but not installed.
         """
-        # Mapping from NCCL DataType to numpy dtype string
-        _dtype_to_numpy = {
-            DataType.Int8: "int8",
-            DataType.Char: "int8",
-            DataType.Uint8: "uint8",
-            DataType.Int32: "int32",
-            DataType.Int: "int32",
-            DataType.Uint32: "uint32",
-            DataType.Int64: "int64",
-            DataType.Uint64: "uint64",
-            DataType.Float16: "float16",
-            DataType.Half: "float16",
-            DataType.Float32: "float32",
-            DataType.Float: "float32",
-            DataType.Float64: "float64",
-            DataType.Double: "float64",
-            # ml-dtypes
-            DataType.Bfloat16: "bfloat16",
-            DataType.Float8e4m3: "float8_e4m3fn",
-            DataType.Float8e5m2: "float8_e5m2",
-        }
-
-        if self._datatype not in _dtype_to_numpy:
-            raise NcclInvalid(
-                f"Unsupported data type: NCCL datatype {self._datatype} has no numpy dtype mapping"
-            )
-
-        dtype_str = _dtype_to_numpy[self._datatype]
-
-        # For ml-dtypes, provide helpful error if package is missing (optional dependency)
-        if dtype_str in ("bfloat16", "float8_e4m3fn", "float8_e5m2"):
+        dtype_str = _NCCL_TO_NUMPY_NAME[self]
+        if dtype_str in _ML_DTYPE_NAMES:
             try:
                 return _np.dtype(dtype_str)
             except TypeError as e:
                 raise NcclInvalid(
-                    f"Cannot create numpy dtype '{dtype_str}': ml-dtypes package is not installed. "
-                    f"ml-dtypes is required for bfloat16 and float8 support. "
+                    f"Cannot create numpy dtype '{dtype_str}': ml-dtypes "
+                    f"package is not installed. ml-dtypes is required for "
+                    f"bfloat16 and float8 support. "
                     f"Install with: pip install ml-dtypes"
                 ) from e
-        else:
-            return _np.dtype(dtype_str)
+        return _np.dtype(dtype_str)
 
 
-INT8 = NcclDataType(DataType.Int8)
-CHAR = NcclDataType(DataType.Char)
-UINT8 = NcclDataType(DataType.Uint8)
-INT32 = NcclDataType(DataType.Int32)
-INT = NcclDataType(DataType.Int)
-UINT32 = NcclDataType(DataType.Uint32)
-INT64 = NcclDataType(DataType.Int64)
-UINT64 = NcclDataType(DataType.Uint64)
-FLOAT16 = NcclDataType(DataType.Float16)
-HALF = NcclDataType(DataType.Half)
-FLOAT32 = NcclDataType(DataType.Float32)
-FLOAT = NcclDataType(DataType.Float)
-FLOAT64 = NcclDataType(DataType.Float64)
-DOUBLE = NcclDataType(DataType.Double)
-BFLOAT16 = NcclDataType(DataType.Bfloat16)
-FLOAT8E4M3 = NcclDataType(DataType.Float8e4m3)
-FLOAT8E5M2 = NcclDataType(DataType.Float8e5m2)
+_ITEMSIZE: dict[NcclDataType, int] = {
+    NcclDataType.INT8: 1,
+    NcclDataType.UINT8: 1,
+    NcclDataType.FLOAT8E4M3: 1,
+    NcclDataType.FLOAT8E5M2: 1,
+    NcclDataType.FLOAT16: 2,
+    NcclDataType.BFLOAT16: 2,
+    NcclDataType.INT32: 4,
+    NcclDataType.UINT32: 4,
+    NcclDataType.FLOAT32: 4,
+    NcclDataType.INT64: 8,
+    NcclDataType.UINT64: 8,
+    NcclDataType.FLOAT64: 8,
+}
+
+_NAME_TO_NCCL: dict[str, NcclDataType] = {
+    "bfloat16": NcclDataType.BFLOAT16,
+    "float8_e4m3fn": NcclDataType.FLOAT8E4M3,
+    "float8_e5m2": NcclDataType.FLOAT8E5M2,
+}
+
+_KIND_SIZE_TO_NCCL: dict[tuple[str, int], NcclDataType] = {
+    ("f", 2): NcclDataType.FLOAT16,
+    ("f", 4): NcclDataType.FLOAT32,
+    ("f", 8): NcclDataType.FLOAT64,
+    ("i", 1): NcclDataType.INT8,
+    ("i", 4): NcclDataType.INT32,
+    ("i", 8): NcclDataType.INT64,
+    ("u", 1): NcclDataType.UINT8,
+    ("u", 4): NcclDataType.UINT32,
+    ("u", 8): NcclDataType.UINT64,
+}
+
+_NCCL_TO_NUMPY_NAME: dict[NcclDataType, str] = {
+    NcclDataType.INT8: "int8",
+    NcclDataType.UINT8: "uint8",
+    NcclDataType.INT32: "int32",
+    NcclDataType.UINT32: "uint32",
+    NcclDataType.INT64: "int64",
+    NcclDataType.UINT64: "uint64",
+    NcclDataType.FLOAT16: "float16",
+    NcclDataType.FLOAT32: "float32",
+    NcclDataType.FLOAT64: "float64",
+    NcclDataType.BFLOAT16: "bfloat16",
+    NcclDataType.FLOAT8E4M3: "float8_e4m3fn",
+    NcclDataType.FLOAT8E5M2: "float8_e5m2",
+}
+
+_ML_DTYPE_NAMES: frozenset[str] = frozenset({"bfloat16", "float8_e4m3fn", "float8_e5m2"})
 
 
-class NcclRedOp:
-    """NCCL reduction operator wrapper with validation.
+###############################################################################
+# Module-level constants
+###############################################################################
 
-    Wraps an NCCL reduction operator value and validates it against the
-    built-in operators (Sum, Prod, Max, Min, Avg).
-    """
+INT8 = NcclDataType.INT8
+CHAR = NcclDataType.CHAR
+UINT8 = NcclDataType.UINT8
+INT32 = NcclDataType.INT32
+INT = NcclDataType.INT
+UINT32 = NcclDataType.UINT32
+INT64 = NcclDataType.INT64
+UINT64 = NcclDataType.UINT64
+FLOAT16 = NcclDataType.FLOAT16
+HALF = NcclDataType.HALF
+FLOAT32 = NcclDataType.FLOAT32
+FLOAT = NcclDataType.FLOAT
+FLOAT64 = NcclDataType.FLOAT64
+DOUBLE = NcclDataType.DOUBLE
+BFLOAT16 = NcclDataType.BFLOAT16
+FLOAT8E4M3 = NcclDataType.FLOAT8E4M3
+FLOAT8E5M2 = NcclDataType.FLOAT8E5M2
 
-    def __init__(self, value: int):
-        """Initializes an NcclRedOp with validation.
-
-        Args:
-            value: Integer value of the reduction operator.
-
-        Raises:
-            NcclInvalid: If the reduction operator value is not a valid NCCL
-                reduction operator.
-        """
-        try:
-            self._redop_value = RedOp(value)
-        except Exception:
-            raise NcclInvalid(
-                f"Invalid reduction operator: value {value} is not a valid NCCL reduction operator"
-            )
-
-    def __int__(self) -> int:
-        return int(self._redop_value)
-
-    def __str__(self) -> str:
-        return self._redop_value.name
-
-    def __repr__(self) -> str:
-        return f"<NcclRedOp: {self._redop_value.name}>"
-
-    @property
-    def value(self) -> int:
-        """Integer value of the reduction operator."""
-        return int(self._redop_value)
-
-    @property
-    def name(self) -> str:
-        """Name of the reduction operator (e.g. 'Sum', 'Max')."""
-        return self._redop_value.name
+SUM = NcclRedOp.SUM
+PROD = NcclRedOp.PROD
+MAX = NcclRedOp.MAX
+MIN = NcclRedOp.MIN
+AVG = NcclRedOp.AVG
 
 
-SUM = NcclRedOp(RedOp.Sum)
-PROD = NcclRedOp(RedOp.Prod)
-MAX = NcclRedOp(RedOp.Max)
-MIN = NcclRedOp(RedOp.Min)
-AVG = NcclRedOp(RedOp.Avg)
+###############################################################################
+# Buffer / device / stream protocols and aliases
+###############################################################################
 
 
 class SupportsDLPack(Protocol):

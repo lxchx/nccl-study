@@ -15,22 +15,7 @@ import numpy as np
 from typing import Literal
 
 from nccl.core.buffer import mem_alloc
-from nccl.core.typing import (
-    NcclInvalid,
-    NcclDataType,
-    INT8,
-    UINT8,
-    INT32,
-    UINT32,
-    INT64,
-    UINT64,
-    FLOAT16,
-    FLOAT32,
-    FLOAT64,
-    BFLOAT16,
-    FLOAT8E4M3,
-    FLOAT8E5M2,
-)
+from nccl.core.typing import NcclInvalid, NcclDataType
 
 __all__ = ["empty", "resolve_array"]
 
@@ -46,14 +31,16 @@ except ImportError:
 def _to_nccl_dtype(cupy_dtype) -> NcclDataType:
     """Converts a CuPy dtype to NcclDataType.
 
-    CuPy dtypes are NumPy dtype objects. For bfloat16, float8_e4m3fn, and
-    float8_e5m2, the optional ml-dtypes package is required.
+    CuPy dtypes are NumPy dtype objects, so resolution is delegated to
+    :py:meth:`NcclDataType.from_numpy_dtype`. NumPy ``bool`` has no NCCL
+    equivalent and is mapped to ``UINT8``. For bfloat16, float8_e4m3fn,
+    and float8_e5m2, the optional ml-dtypes package is required.
 
     Args:
         cupy_dtype: CuPy / NumPy data type to convert.
 
     Returns:
-        Corresponding NcclDataType global constant.
+        Corresponding :py:class:`NcclDataType` member.
 
     Raises:
         ModuleNotFoundError: If CuPy is not installed.
@@ -63,73 +50,18 @@ def _to_nccl_dtype(cupy_dtype) -> NcclDataType:
     if not _cupy_enabled:
         raise ModuleNotFoundError("CuPy is not installed")
 
-    # CuPy dtypes are numpy dtypes - convert to numpy dtype first
     try:
         np_dtype = np.dtype(cupy_dtype)
     except (TypeError, ValueError) as e:
         raise NcclInvalid(
-            f"Invalid data type: could not convert {cupy_dtype} (type: {type(cupy_dtype).__name__}) "
-            f"to numpy dtype: {e}"
+            f"Invalid data type: could not convert {cupy_dtype} "
+            f"(type: {type(cupy_dtype).__name__}) to numpy dtype: {e}"
         )
 
-    # Map numpy dtype to global NcclDataType constants
-    # First try name-based for ml-dtypes (higher priority)
-    if np_dtype.name == "bfloat16":
-        return BFLOAT16
-    elif np_dtype.name == "float8_e4m3fn":
-        return FLOAT8E4M3
-    elif np_dtype.name == "float8_e5m2":
-        return FLOAT8E5M2
+    if np_dtype.kind == "b":
+        return NcclDataType.UINT8
 
-    # Explicitly unsupported types - detect and give clear error
-    _unsupported_kinds = {
-        "c": "complex",
-        "V": "void/structured",
-        "O": "object",
-        "S": "byte string",
-        "U": "unicode string",
-        "M": "datetime",
-        "m": "timedelta",
-    }
-
-    if np_dtype.kind in _unsupported_kinds:
-        kind_name = _unsupported_kinds[np_dtype.kind]
-        raise NcclInvalid(
-            f"Unsupported data type: numpy dtype {np_dtype} ({kind_name} type) has no NCCL equivalent. "
-            f"NCCL only supports numeric types."
-        )
-
-    # Map standard numpy types by kind+size
-    _numpy_to_nccl = {
-        ("f", 2): FLOAT16,
-        ("f", 4): FLOAT32,
-        ("f", 8): FLOAT64,
-        ("i", 1): INT8,
-        ("i", 2): None,  # int16 - explicitly not supported by NCCL
-        ("i", 4): INT32,
-        ("i", 8): INT64,
-        ("u", 1): UINT8,
-        ("u", 2): None,  # uint16 - explicitly not supported by NCCL
-        ("u", 4): UINT32,
-        ("u", 8): UINT64,
-        ("b", 1): UINT8,  # bool -> uint8
-    }
-
-    kind_size = (np_dtype.kind, np_dtype.itemsize)
-    if kind_size in _numpy_to_nccl:
-        result = _numpy_to_nccl[kind_size]
-        if result is None:
-            raise NcclInvalid(
-                f"Unsupported data type: numpy dtype {np_dtype} (kind={np_dtype.kind}, "
-                f"itemsize={np_dtype.itemsize}). NCCL does not support {np_dtype.kind}{np_dtype.itemsize * 8}-bit types."
-            )
-        return result
-    else:
-        raise NcclInvalid(
-            f"Unsupported data type: numpy dtype {np_dtype} (kind={np_dtype.kind}, "
-            f"itemsize={np_dtype.itemsize}, name={np_dtype.name}) has no NCCL equivalent. "
-            f"NCCL supports: int8/32/64, uint8/32/64, float16/32/64, bfloat16, float8_e4m3fn, float8_e5m2."
-        )
+    return NcclDataType.from_numpy_dtype(np_dtype)
 
 
 def _allocate_nccl_array(shape: tuple[int, ...], dtype: np.dtype, order: str) -> cupy.ndarray:

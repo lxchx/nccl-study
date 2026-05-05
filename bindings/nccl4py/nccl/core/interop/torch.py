@@ -15,20 +15,7 @@ import numpy as np
 from typing import Literal
 
 from nccl.core.buffer import mem_alloc
-from nccl.core.typing import (
-    NcclInvalid,
-    NcclDataType,
-    FLOAT16,
-    FLOAT32,
-    FLOAT64,
-    INT8,
-    INT32,
-    INT64,
-    UINT8,
-    BFLOAT16,
-    FLOAT8E4M3,
-    FLOAT8E5M2,
-)
+from nccl.core.typing import NcclInvalid, NcclDataType
 
 __all__ = ["empty", "resolve_tensor"]
 
@@ -45,7 +32,10 @@ def _to_nccl_dtype(torch_dtype) -> NcclDataType:
     """Converts a PyTorch dtype to NcclDataType.
 
     torch.bool is mapped to UINT8 for convenience. float8_e4m3fn and
-    float8_e5m2 are supported on PyTorch 2.1+.
+    float8_e5m2 are supported on PyTorch 2.1+. PyTorch's same-singleton
+    aliases (``torch.half`` is ``torch.float16``, ``torch.float`` is
+    ``torch.float32``, ``torch.double`` is ``torch.float64``,
+    ``torch.long`` is ``torch.int64``) need no separate map entries.
 
     Args:
         torch_dtype: PyTorch data type to convert.
@@ -62,69 +52,29 @@ def _to_nccl_dtype(torch_dtype) -> NcclDataType:
         raise ModuleNotFoundError("PyTorch is not installed")
 
     _torch_to_nccl = {
-        # Float types (all NCCL-supported)
-        torch.float16: FLOAT16,
-        torch.half: FLOAT16,  # Alias
-        torch.float32: FLOAT32,
-        torch.float: FLOAT32,  # Alias
-        torch.float64: FLOAT64,
-        torch.double: FLOAT64,  # Alias
-        torch.bfloat16: BFLOAT16,
-        # Signed integer types
-        torch.int8: INT8,
-        torch.int32: INT32,
-        torch.int64: INT64,
-        torch.long: INT64,  # Alias
-        # Unsigned types
-        torch.uint8: UINT8,
-        torch.bool: UINT8,  # Map bool to uint8 for convenience
+        torch.float16: NcclDataType.FLOAT16,
+        torch.float32: NcclDataType.FLOAT32,
+        torch.float64: NcclDataType.FLOAT64,
+        torch.bfloat16: NcclDataType.BFLOAT16,
+        torch.int8: NcclDataType.INT8,
+        torch.int32: NcclDataType.INT32,
+        torch.int64: NcclDataType.INT64,
+        torch.uint8: NcclDataType.UINT8,
+        torch.bool: NcclDataType.UINT8,  # NCCL has no bool; map to its natural byte-width.
     }
-
-    # Add float8 types if available (PyTorch 2.1+)
+    # PyTorch 2.1+ float8 types (optional).
     if hasattr(torch, "float8_e4m3fn"):
-        _torch_to_nccl[torch.float8_e4m3fn] = FLOAT8E4M3
+        _torch_to_nccl[torch.float8_e4m3fn] = NcclDataType.FLOAT8E4M3
     if hasattr(torch, "float8_e5m2"):
-        _torch_to_nccl[torch.float8_e5m2] = FLOAT8E5M2
+        _torch_to_nccl[torch.float8_e5m2] = NcclDataType.FLOAT8E5M2
 
-    # Explicitly unsupported PyTorch dtypes (no NCCL equivalent)
-    _unsupported_dtypes = set()
-
-    # Integer types not in NCCL
-    if hasattr(torch, "int16"):
-        _unsupported_dtypes.add(torch.int16)
-    if hasattr(torch, "short"):
-        _unsupported_dtypes.add(torch.short)
-
-    # Complex types (NCCL doesn't support)
-    if hasattr(torch, "complex64"):
-        _unsupported_dtypes.add(torch.complex64)
-        _unsupported_dtypes.add(torch.cfloat)
-    if hasattr(torch, "complex128"):
-        _unsupported_dtypes.add(torch.complex128)
-        _unsupported_dtypes.add(torch.cdouble)
-
-    # Quantized types (NCCL doesn't support)
-    for qtype in ["qint8", "quint8", "qint32", "quint4x2", "quint2x4"]:
-        if hasattr(torch, qtype):
-            _unsupported_dtypes.add(getattr(torch, qtype))
-
-    # Check if dtype is explicitly unsupported
-    if torch_dtype in _unsupported_dtypes:
-        raise NcclInvalid(
-            f"Unsupported data type: torch dtype {torch_dtype} has no NCCL equivalent. "
-            f"NCCL does not support complex, int16, or quantized types."
-        )
-
-    # Check if dtype is supported
-    if torch_dtype in _torch_to_nccl:
+    try:
         return _torch_to_nccl[torch_dtype]
-    else:
-        # Unknown dtype - list what we do support
-        supported_list = [str(dt) for dt in sorted(_torch_to_nccl.keys(), key=str)]
+    except KeyError:
         raise NcclInvalid(
-            f"Unknown torch dtype {torch_dtype}. "
-            f"Supported types: {', '.join(supported_list[:12])}..."
-        )
+            f"Unsupported torch dtype {torch_dtype} has no NCCL equivalent. "
+            f"NCCL does not support complex, int16, or quantized types."
+        ) from None
 
 
 def _parse_device(device: torch.device | int | str | None) -> int:

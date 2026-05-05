@@ -4,7 +4,7 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "os_comm_pair.h"
+#include "os_socket_pair.h"
 #include "checks.h"
 
 #include <winsock2.h>
@@ -62,7 +62,7 @@ fail:
   return ncclSystemError;
 }
 
-ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
+ncclResult_t ncclOsSocketPairCreate(ncclSocketPairDescriptor pair[2]) {
   SOCKET sockets[2];
   int wsaError = 0;
   ncclResult_t ret = createSocketPair(sockets, &wsaError);
@@ -75,21 +75,21 @@ ncclResult_t ncclOsCommPairCreate(ncclCommPairDescriptor pair[2]) {
   return ncclSuccess;
 }
 
-ncclResult_t ncclOsCommPairClose(ncclCommPairDescriptor pair[2]) {
+ncclResult_t ncclOsSocketPairClose(ncclSocketPairDescriptor pair[2]) {
   ncclResult_t firstError = ncclSuccess;
   for (int i = 0; i < 2; i++) {
-    if (pair[i] != NCCL_COMM_PAIR_INVALID) {
+    if (pair[i] != NCCL_SOCKET_PAIR_INVALID) {
       if (closesocket(pair[i]) == SOCKET_ERROR && firstError == ncclSuccess) {
         WARN("Failed to close socket: %d", WSAGetLastError());
         firstError = ncclSystemError;
       }
-      pair[i] = NCCL_COMM_PAIR_INVALID;
+      pair[i] = NCCL_SOCKET_PAIR_INVALID;
     }
   }
   return firstError;
 }
 
-ncclResult_t ncclOsCommPairWrite(ncclCommPairDescriptor descriptor, const void* buf, size_t len, size_t* written) {
+ncclResult_t ncclOsSocketPairWrite(ncclSocketPairDescriptor descriptor, const void* buf, size_t len, size_t* written) {
   // Clamp to INT_MAX since send() takes int length
   // Callers will loop to send remaining data
   int sendLen = (len > INT_MAX) ? INT_MAX : (int)len;
@@ -102,7 +102,7 @@ ncclResult_t ncclOsCommPairWrite(ncclCommPairDescriptor descriptor, const void* 
   return ncclSuccess;
 }
 
-ncclResult_t ncclOsCommPairRead(ncclCommPairDescriptor descriptor, void* buf, size_t len, size_t* nread) {
+ncclResult_t ncclOsSocketPairRead(ncclSocketPairDescriptor descriptor, void* buf, size_t len, size_t* nread) {
   // Clamp to INT_MAX since recv() takes int length
   // Callers will loop to read remaining data
   int recvLen = (len > INT_MAX) ? INT_MAX : (int)len;

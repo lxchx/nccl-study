@@ -36,7 +36,7 @@ static ncclResult_t ncclRmaProxyPutDescFromTask(struct ncclComm* comm, struct nc
   desc->putSignal.targetRank = task->peer;
   desc->putSignal.request = NULL;
   if (!persistent) {
-    desc->opSeq = rmaProxyCtx->opSeqs[task->peer]++;
+    desc->opSeq = ++rmaProxyCtx->opSeqs[task->peer];
     desc->readySeq = &rmaProxyCtx->readySeqs[task->peer];
     desc->readySeqDev = &rmaProxyCtx->readySeqsDev[task->peer];
     desc->readySeqGdrHandle = rmaProxyCtx->readySeqsGdrHandle;

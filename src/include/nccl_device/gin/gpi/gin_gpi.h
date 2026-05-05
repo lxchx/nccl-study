@@ -634,19 +634,19 @@ struct ncclGinApi_ResetSignal<NCCL_NET_DEVICE_GIN_GPI> {
 
 template <>
 struct ncclGinApi_GetCounterPtr<NCCL_NET_DEVICE_GIN_GPI> {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
     using nccl::utility::loadConst;
     gpi_gpu_channel_t *gpi_ctx = nccl::gin::gpi::gpi_gpu_channel_get_ptr(ctx);
-    return (uint64_t*)(loadConst(&gpi_ctx->gpu_counter_ptr_) + counterId);
+    return { (uint64_t*)(loadConst(&gpi_ctx->gpu_counter_ptr_) + counterId), 0 };
   }
 };
 
 template <>
 struct ncclGinApi_GetSignalPtr<NCCL_NET_DEVICE_GIN_GPI> {
-  NCCL_DEVICE_INLINE static uint64_t* call(ncclGinCtx ctx, ncclGinSignal_t signalId) {
+  NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx ctx, ncclGinSignal_t signalId) {
     using nccl::utility::loadConst;
     gpi_gpu_channel_t *gpi_ctx = nccl::gin::gpi::gpi_gpu_channel_get_ptr(ctx);
-    return (uint64_t*)(loadConst(&gpi_ctx->gpu_signal_ptr_) + signalId);
+    return { (uint64_t*)(loadConst(&gpi_ctx->gpu_signal_ptr_) + signalId), 0 };
   }
 };
 

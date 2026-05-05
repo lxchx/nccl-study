@@ -305,8 +305,7 @@ template <>
 struct ncclGinApi_GetCounterPtr<NCCL_NET_DEVICE_GIN_PROXY> {
   NCCL_DEVICE_INLINE static ncclGinOffsetPtr call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
-    return {nccl::utility::loadConst(&proxyCtx->counters) + counterId,
-            nccl::utility::loadConst(&proxyCtx->counterOffsets)[counterId]};
+    return {nccl::utility::loadConst(&proxyCtx->counters) + counterId, 0};
   }
 };
 
@@ -315,8 +314,7 @@ struct ncclGinApi_ResetCounter<NCCL_NET_DEVICE_GIN_PROXY> {
   NCCL_DEVICE_INLINE static void call(ncclGinCtx ctx, ncclGinCounter_t counterId) {
     ncclGinProxyGpuCtx_t* proxyCtx = &((ncclGinProxyGpuCtx_t*)ctx.handle)[ctx.contextId];
     uint64_t* counter = nccl::utility::loadConst(&proxyCtx->counters) + counterId;
-    uint64_t* offsetPtr = nccl::utility::loadConst(&proxyCtx->counterOffsets) + counterId;
-    *offsetPtr = cuda::atomic_ref<uint64_t>{*counter}.load(cuda::memory_order_relaxed);
+    *counter = 0;
   }
 };
 

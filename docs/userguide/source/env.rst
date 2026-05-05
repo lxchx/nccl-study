@@ -556,6 +556,8 @@ INFO - Prints debug information.
 
 TRACE - Prints replayable trace information on every call.
 
+.. _NCCL_DEBUG_FILE:
+
 NCCL_DEBUG_FILE
 ---------------
 (since 2.2.12)
@@ -573,6 +575,8 @@ output to those predefined I/O streams. This also has the effect of making the o
 Setting ``NCCL_DEBUG_FILE`` will cause NCCL to create and overwrite any previous files of that name.
 
 Note: If the filename is not unique across all the job processes, then the output may be lost or corrupted.
+
+.. _NCCL_DEBUG_SUBSYS:
 
 NCCL_DEBUG_SUBSYS
 -----------------
@@ -595,6 +599,8 @@ for memory allocations), CALL (stands for function calls), PROXY (stands for the
 (stands for coarse-grained profiling of initialization), RAS (stands for reliability, availability, and serviceability
 subsystem), DESTROY (stands for communicator destroy, abort, revoke, and plugin unload/close operations)
 and ALL (includes every subsystem).
+
+.. _NCCL_DEBUG_TIMESTAMP_FORMAT:
 
 NCCL_DEBUG_TIMESTAMP_FORMAT
 ---------------------------
@@ -631,6 +637,8 @@ indicates how many digits will be printed. For example, ``%3f`` will
 print milliseconds. The value is zero padded. For example:
 :literal:`[%F %T.%9f] \ `. (Note that this can only be used once in the format
 string.)
+
+.. _NCCL_DEBUG_TIMESTAMP_LEVELS:
 
 NCCL_DEBUG_TIMESTAMP_LEVELS
 ---------------------------

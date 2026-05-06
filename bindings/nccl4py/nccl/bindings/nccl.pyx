@@ -2392,8 +2392,8 @@ cdef class TeamRequirements:
 cdef _get_dev_comm_dtype_offsets():
     cdef ncclDevComm_t pod = ncclDevComm_t()
     return _numpy.dtype({
-        'names': ['magic', 'version', 'rank', 'n_ranks', 'n_ranks_rcp32', 'lsa_rank', 'lsa_size', 'lsa_size_rcp32', 'window_table', 'resource_window', 'resource_window_inlined', 'lsa_multimem', 'lsa_barrier', 'rail_gin_barrier', 'gin_connection_count', 'gin_net_device_types', 'gin_handles', 'gin_signal_count', 'gin_counter_count', 'gin_signal_shadows', 'gin_context_count', 'gin_is_railed', 'abort_flag', 'hybrid_lsa_barrier', 'hybrid_rail_gin_barrier', 'world_gin_barrier'],
-        'formats': [_numpy.uint32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.intp, _numpy.intp, resource_window_vidmem_dtype, multimem_handle_dtype, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, _numpy.uint8, (_numpy.uint8, 4), (_numpy.int64, 4), _numpy.int32, _numpy.int32, _numpy.intp, _numpy.uint32, _numpy.uint8, _numpy.intp, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, gin_barrier_handle_dtype],
+        'names': ['magic', 'version', 'rank', 'n_ranks', 'n_ranks_rcp32', 'lsa_rank', 'lsa_size', 'lsa_size_rcp32', 'window_table', 'resource_window', 'resource_window_inlined', 'lsa_multimem', 'lsa_barrier', 'rail_gin_barrier', 'gin_connection_count', 'gin_net_device_types', 'gin_handles', 'gin_signal_count', 'gin_counter_count', 'gin_signal_shadows', 'gin_context_count', 'gin_is_railed', 'gin_strong_legacy_signals', 'abort_flag', 'hybrid_lsa_barrier', 'hybrid_rail_gin_barrier', 'world_gin_barrier'],
+        'formats': [_numpy.uint32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.int32, _numpy.int32, _numpy.uint32, _numpy.intp, _numpy.intp, resource_window_vidmem_dtype, multimem_handle_dtype, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, _numpy.uint8, (_numpy.uint8, 4), (_numpy.int64, 4), _numpy.int32, _numpy.int32, _numpy.intp, _numpy.uint32, _numpy.uint8, _numpy.uint8, _numpy.intp, lsa_barrier_handle_dtype, gin_barrier_handle_dtype, gin_barrier_handle_dtype],
         'offsets': [
             (<intptr_t>&(pod.magic)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.version)) - (<intptr_t>&pod),
@@ -2417,6 +2417,7 @@ cdef _get_dev_comm_dtype_offsets():
             (<intptr_t>&(pod.ginSignalShadows)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginContextCount)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginIsRailed)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.ginStrongLegacySignals)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.abortFlag)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.hybridLsaBarrier)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.hybridRailGinBarrier)) - (<intptr_t>&pod),
@@ -2790,6 +2791,17 @@ cdef class DevComm:
         self._ptr[0].ginIsRailed = val
 
     @property
+    def gin_strong_legacy_signals(self):
+        """int: """
+        return self._ptr[0].ginStrongLegacySignals
+
+    @gin_strong_legacy_signals.setter
+    def gin_strong_legacy_signals(self, val):
+        if self._readonly:
+            raise ValueError("This DevComm instance is read-only")
+        self._ptr[0].ginStrongLegacySignals = val
+
+    @property
     def abort_flag(self):
         """int: """
         return <intptr_t>(self._ptr[0].abortFlag)
@@ -2847,8 +2859,8 @@ cdef class DevComm:
 cdef _get_dev_comm_requirements_dtype_offsets():
     cdef ncclDevCommRequirements_t pod = ncclDevCommRequirements_t()
     return _numpy.dtype({
-        'names': ['size_', 'magic', 'version', 'resource_requirements_list', 'team_requirements_list', 'lsa_multimem', 'barrier_count', 'lsa_barrier_count', 'rail_gin_barrier_count', 'lsa_ll_a2a_block_count', 'lsa_ll_a2a_slot_count', 'gin_force_enable', 'gin_context_count', 'gin_signal_count', 'gin_counter_count', 'gin_connection_type', 'gin_exclusive_contexts', 'gin_queue_depth', 'gin_traffic_class', 'world_gin_barrier_count'],
-        'formats': [_numpy.uint64, _numpy.uint32, _numpy.uint32, _numpy.intp, _numpy.intp, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32],
+        'names': ['size_', 'magic', 'version', 'resource_requirements_list', 'team_requirements_list', 'lsa_multimem', 'barrier_count', 'lsa_barrier_count', 'rail_gin_barrier_count', 'lsa_ll_a2a_block_count', 'lsa_ll_a2a_slot_count', 'gin_force_enable', 'gin_context_count', 'gin_signal_count', 'gin_counter_count', 'gin_connection_type', 'gin_exclusive_contexts', 'gin_queue_depth', 'gin_traffic_class', 'world_gin_barrier_count', 'gin_strong_signals_required'],
+        'formats': [_numpy.uint64, _numpy.uint32, _numpy.uint32, _numpy.intp, _numpy.intp, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8, _numpy.int32, _numpy.int32, _numpy.int32, _numpy.uint8],
         'offsets': [
             (<intptr_t>&(pod.size)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.magic)) - (<intptr_t>&pod),
@@ -2870,6 +2882,7 @@ cdef _get_dev_comm_requirements_dtype_offsets():
             (<intptr_t>&(pod.ginQueueDepth)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.ginTrafficClass)) - (<intptr_t>&pod),
             (<intptr_t>&(pod.worldGinBarrierCount)) - (<intptr_t>&pod),
+            (<intptr_t>&(pod.ginStrongSignalsRequired)) - (<intptr_t>&pod),
         ],
         'itemsize': sizeof(ncclDevCommRequirements_t),
     })
@@ -3163,6 +3176,17 @@ cdef class DevCommRequirements:
         if self._readonly:
             raise ValueError("This DevCommRequirements instance is read-only")
         self._ptr[0].worldGinBarrierCount = val
+
+    @property
+    def gin_strong_signals_required(self):
+        """int: """
+        return self._ptr[0].ginStrongSignalsRequired
+
+    @gin_strong_signals_required.setter
+    def gin_strong_signals_required(self, val):
+        if self._readonly:
+            raise ValueError("This DevCommRequirements instance is read-only")
+        self._ptr[0].ginStrongSignalsRequired = val
 
     def __getstate__(self):
         raise pickle.PicklingError("Pickle not supported for DevCommRequirements")

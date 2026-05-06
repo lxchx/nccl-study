@@ -21,6 +21,7 @@ NCCL_EXTERN_C __host__ ncclResult_t ncclGinBarrierCreateRequirement(ncclComm_t, 
 #if NCCL_CHECK_CUDACC
 enum class ncclGinFenceLevel {
   None,
+  Put,            // After barrier returns, all prior puts from this rank on the bound GIN context have settled at their destinations.
   Relaxed = None  // Deprecated alias for None; kept for source-level backward compatibility.
 };
 

@@ -51,6 +51,13 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   uint64_t startCycle;
   ncclResult_t ret = ncclSuccess;
   this->coop.sync();
+  // For fence=Put: drain prior outgoing puts/gets on this context before signaling so peers,
+  // upon observing our signal, see our outgoing data already settled at their destinations.
+  // The release-order argument is passed through to the proxy backend; GDAKI ignores it
+  // (DOCA already guarantees memory_order_acquire on flush completion).
+  if (fence == ncclGinFenceLevel::Put) {
+    this->net.flush(this->coop, nccl::utility::releaseOrderOf(ord));
+  }
   if NCCL_IF_CONSTEXPR (EnableTimeout) {
     startCycle = clock64();
   }

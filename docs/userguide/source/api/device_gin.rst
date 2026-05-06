@@ -166,7 +166,17 @@ ncclGinBarrierSession
 
    .. cpp:function:: void sync(Coop coop, cuda::memory_order order, ncclGinFenceLevel fence)
 
-      Synchronizes all threads of all team members that participate in the barrier session. ``ncclGinFenceLevel::None`` is
-      the only defined value for *fence* for now (pure synchronization, no drain).
+      Synchronizes all threads of all team members that participate in the barrier session. The *fence* argument selects
+      which prior network operations on the bound GIN context must be complete after the barrier returns:
+
+      * ``ncclGinFenceLevel::None`` — pure synchronization, no drain.
+      * ``ncclGinFenceLevel::Put`` — all prior puts from this rank on the bound GIN context have settled at their
+        destinations. Internally this issues a ``flush`` on the context before signaling, so that peers, upon observing
+        this rank's signal, see this rank's outgoing data already present in their memory.
+
       ``ncclGinFenceLevel::Relaxed`` is preserved as a deprecated alias for ``None`` for source-level backward compatibility;
       new code should use ``None``.
+
+      For the hybrid :cpp:class:`ncclBarrierSession`, when ``fence != None`` the implementation runs a second intra-node LSA
+      sync after rail-GIN to propagate rail-GIN completion across rails, so ``Barrier(World, fence!=None)`` provides the same
+      world-scope guarantees as ``GinBarrier(World, fence!=None)`` on a railed setup.

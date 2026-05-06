@@ -91,6 +91,14 @@ NCCL_DEVICE_INLINE void ncclBarrierSession<Coop>::sync(Coop, cuda::memory_order 
   if (this->outerGinBar.present) {
     this->outerGinBar.thing.sync(this->coop, this->innerLsaBar.present ? nccl::utility::acquireOrderOf(ord) : ord, fence);
   }
+  // Two-pass LSA: when both inner LSA and outer rail-GIN are present and fence semantics are
+  // requested, run a second intra-node LSA sync to propagate rail-GIN completion across rails.
+  // This closes the cross-rail-cross-node knowledge gap so Barrier(World, fence!=None) matches
+  // GinBarrier(World, fence!=None) at world scope. Skipped for fence=None (the all-arrived
+  // guarantee is already provided by the single-pass causal chain).
+  if (this->innerLsaBar.present && this->outerGinBar.present && fence != ncclGinFenceLevel::None) {
+    this->innerLsaBar.thing.sync(this->coop, nccl::utility::acquireOrderOf(ord));
+  }
 }
 #endif
 
@@ -98,7 +106,7 @@ NCCL_DEVICE_INLINE void ncclBarrierSession<Coop>::sync(Coop, cuda::memory_order 
 template<typename Coop>
 NCCL_DEVICE_INLINE ncclResult_t ncclBarrierSession<Coop>::sync(
     Coop, cuda::memory_order ord, ncclGinFenceLevel fence, uint64_t timeoutCycles) {
-  ncclResult_t lsaResult = ncclSuccess, railResult = ncclSuccess;
+  ncclResult_t lsaResult = ncclSuccess, railResult = ncclSuccess, lsaResult2 = ncclSuccess;
 
   // Inner LSA barrier (if present) - detects remote CTA/rank issues
   if (this->innerLsaBar.present) {
@@ -117,14 +125,31 @@ NCCL_DEVICE_INLINE ncclResult_t ncclBarrierSession<Coop>::sync(
 
   // Outer GIN barrier (if present) - detects remote GPU/network issues
   if (this->outerGinBar.present) {
+    uint64_t startCycle = clock64();
     railResult = this->outerGinBar.thing.sync(
       this->coop,
       this->innerLsaBar.present ? nccl::utility::acquireOrderOf(ord) : ord,
       fence,
       timeoutCycles
     );
+    uint64_t elapsed = clock64() - startCycle;
+    timeoutCycles -= min(elapsed, timeoutCycles);
   }
-  return lsaResult != ncclSuccess ? lsaResult : railResult;
+
+  // Two-pass LSA: second intra-node sync after rail-GIN propagates rail-GIN completion across
+  // rails. Required for Barrier(World, fence!=None) to match GinBarrier(World, fence!=None) at
+  // world scope. Skipped for fence=None.
+  if (this->innerLsaBar.present && this->outerGinBar.present && fence != ncclGinFenceLevel::None) {
+    lsaResult2 = this->innerLsaBar.thing.sync(
+      this->coop,
+      nccl::utility::acquireOrderOf(ord),
+      timeoutCycles
+    );
+  }
+
+  if (lsaResult != ncclSuccess) return lsaResult;
+  if (railResult != ncclSuccess) return railResult;
+  return lsaResult2;
 }
 #endif
 

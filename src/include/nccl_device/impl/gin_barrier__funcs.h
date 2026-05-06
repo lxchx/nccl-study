@@ -92,6 +92,13 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
       this->net.waitSignal(ncclCoopThread(), this->signal + peer, waitVal, 32, nccl::utility::acquireOrderOf(ord));
     }
   }
+  // For fence=Get: drain prior outgoing gets on this context after waiting so that, on
+  // successful barrier exit, all RDMA-Read responses targeting this rank's local buffers
+  // have been DMA'd into GPU memory and are visible after the trailing coop.sync().
+  // Skipped on the timeout path (control jumps directly to exit: with ret = ncclTimeout).
+  if (fence == ncclGinFenceLevel::Get) {
+    this->net.flush(this->coop, nccl::utility::acquireOrderOf(ord));
+  }
   goto exit; // Silence a compiler warning.
 exit:
   this->coop.sync();

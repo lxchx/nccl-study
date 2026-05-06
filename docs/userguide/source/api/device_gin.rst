@@ -176,6 +176,8 @@ ncclGinBarrierSession
       * ``ncclGinFenceLevel::Get`` — all prior gets from this rank on the bound GIN context have landed in this rank's
         local memory. Internally this issues a ``flush`` on the context after the per-peer signal/wait loop, draining any
         in-flight RDMA-Read responses so the local buffers used as GET destinations are populated when the barrier returns.
+      * ``ncclGinFenceLevel::All``: both ``Put`` and ``Get`` guarantees hold. Internally this issues both flushes (one
+        before signaling and one after waiting); the strongest fence available on the bound GIN context.
 
       ``ncclGinFenceLevel::Relaxed`` is preserved as a deprecated alias for ``None`` for source-level backward compatibility;
       new code should use ``None``.

@@ -23,6 +23,7 @@ enum class ncclGinFenceLevel {
   None,
   Put,            // After barrier returns, all prior puts from this rank on the bound GIN context have settled at their destinations.
   Get,            // After barrier returns, all prior gets from this rank on the bound GIN context have landed in local memory.
+  All,            // After barrier returns, both Put and Get guarantees hold.
   Relaxed = None  // Deprecated alias for None; kept for source-level backward compatibility.
 };
 

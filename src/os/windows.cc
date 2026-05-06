@@ -813,6 +813,9 @@ ncclResult_t ncclOsShmOpen(char* shmPath, size_t shmPathSize, size_t shmSize,
   char* hptr = NULL;
   void* dptr = NULL;
   ncclResult_t ret = ncclSuccess;
+  cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
+  bool captureModeSet = false;
+  bool registered = false;
   struct ncclShmHandleInternal* tmphandle;
   bool create = refcount > 0 ? true : false;
   const size_t refSize = sizeof(uint64_t);
@@ -886,20 +889,13 @@ ncclResult_t ncclOsShmOpen(char* shmPath, size_t shmPathSize, size_t shmSize,
 
   if (devShmPtr) {
     INFO(NCCL_ALLOC, "SHM legacy: sharing buffer with GPU via cudaHostRegister + cudaHostGetDevicePointer (host %p size %ld)", (void*)hptr, (long)realShmSize);
-    cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
-    cudaError_t regRes = cudaThreadExchangeStreamCaptureMode(&mode);
-    if (regRes == cudaSuccess)
-      regRes = cudaHostRegister((void*)hptr, realShmSize, cudaHostRegisterPortable | cudaHostRegisterMapped);
-    if (regRes == cudaSuccess)
-      regRes = cudaHostGetDevicePointer(&dptr, (void*)hptr, 0);
-    if (regRes == cudaSuccess)
-      regRes = cudaThreadExchangeStreamCaptureMode(&mode);
-    /* cudaHostRegister on MapViewOfFile memory often fails (driver limitation).
-     * Do not fail the open; leave dptr unset so transport can use staging path. */
-    if (regRes != cudaSuccess) {
-      INFO(NCCL_ALLOC, "SHM legacy: cudaHostRegister/cudaHostGetDevicePointer failed: %s; segment will be used unpinned (staging path)", cudaGetErrorString(regRes));
-      dptr = NULL;
-    }
+    CUDACHECKGOTO(cudaThreadExchangeStreamCaptureMode(&mode), ret, fail_cuda);
+    captureModeSet = true;
+    CUDACHECKGOTO(cudaHostRegister((void*)hptr, realShmSize, cudaHostRegisterPortable | cudaHostRegisterMapped), ret, fail_cuda);
+    registered = true;
+    CUDACHECKGOTO(cudaHostGetDevicePointer(&dptr, (void*)hptr, 0), ret, fail_cuda);
+    CUDACHECKGOTO(cudaThreadExchangeStreamCaptureMode(&mode), ret, fail_cuda);
+    captureModeSet = false;
   }
 
   ncclOsShmHandleInit(hMapFile, shmPath, shmSize, realShmSize, hptr, dptr, create, tmphandle);
@@ -908,6 +904,18 @@ exit:
   if (devShmPtr) *devShmPtr = dptr;
   *handle = tmphandle;
   return ret;
+fail_cuda:
+  if (registered) {
+    cudaError_t unregRes = cudaHostUnregister((void*)hptr);
+    if (unregRes != cudaSuccess) WARN("SHM legacy: cudaHostUnregister after setup failure failed: %s", cudaGetErrorString(unregRes));
+  }
+  if (captureModeSet) {
+    cudaError_t modeRes = cudaThreadExchangeStreamCaptureMode(&mode);
+    if (modeRes != cudaSuccess) {
+      WARN("SHM legacy: failed to restore CUDA stream capture mode: %s", cudaGetErrorString(modeRes));
+    }
+  }
+  dptr = NULL;
 fail:
   WARN("Error while %s shared memory segment %s (size %ld)", create ? "creating" : "attaching to",
        shmPath, shmSize);
@@ -925,7 +933,7 @@ ncclResult_t ncclOsShmClose(struct ncclShmHandleInternal* handle) {
   ncclResult_t ret = ncclSuccess;
   if (handle) {
     if (handle->shmPtr) {
-      // if (handle->devShmPtr) CUDACHECK(cudaHostUnregister(handle->shmPtr));
+      if (handle->devShmPtr) CUDACHECK(cudaHostUnregister(handle->shmPtr));
       if (!UnmapViewOfFile(handle->shmPtr)) {
         WARN("UnmapViewOfFile of shared memory %p size %ld failed, error code: %lu",
              handle->shmPtr, handle->realShmSize, GetLastError());

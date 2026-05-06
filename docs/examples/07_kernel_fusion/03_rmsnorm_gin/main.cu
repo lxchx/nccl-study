@@ -92,7 +92,7 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   const int token_idx = rank * gridDim.x + blockIdx.x;  // Global token index
 
   ncclGinBarrierSession<ncclCoopCta> bar { coop, gin, ncclTeamTagWorld(), blockIdx.x };
-  bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
   //============================================================================
   // Phase 1: Reduce-Scatter via GIN PUT
@@ -190,7 +190,7 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   //----------------------------------------------------------------------------
 
   // Release: publish normalization writes before Phase 3 PUTs
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 
   size_t final_token_offset = (token_idx * hidden_dim) * sizeof(float);
   my_window_offset = (blockIdx.x * hidden_dim) * sizeof(float);
@@ -208,7 +208,7 @@ __global__ void RMSNormGIN(ncclWindow_t window_send, ncclWindow_t window_recv, n
   // Phase 3 PUT used window_recv as source; flush lets us treat that staging as consumed
   // before the kernel ends and the host reuses the allocation.
   gin.flush(coop);
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 }
 
 //==============================================================================

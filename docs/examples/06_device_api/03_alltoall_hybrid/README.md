@@ -86,7 +86,7 @@ ncclBarrierSession<ncclCoopCta> bar {
     gin,                        // GIN context for network coordination
     blockIdx.x                  // Barrier index: matches our CTA index
 };
-bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::None);
 ```
 
 ### Peer Classification (Device-side)
@@ -133,7 +133,7 @@ const int lsaSize = lsa.nRanks;              // Number of local peers
 
   gin.flush(ncclCoopCta());
 
-  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::None);
 ```
 
 ### Receiving CTA (Device-side)

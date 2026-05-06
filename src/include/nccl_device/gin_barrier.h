@@ -20,7 +20,8 @@ NCCL_EXTERN_C __host__ ncclResult_t ncclGinBarrierCreateRequirement(ncclComm_t, 
 
 #if NCCL_CHECK_CUDACC
 enum class ncclGinFenceLevel {
-  Relaxed
+  None,
+  Relaxed = None  // Deprecated alias for None; kept for source-level backward compatibility.
 };
 
 template<typename Coop>

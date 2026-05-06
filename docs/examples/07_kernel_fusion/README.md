@@ -572,7 +572,7 @@ const int nRanks = devComm.nRanks;
 const int token_idx = rank * gridDim.x + blockIdx.x;
 
 ncclGinBarrierSession<ncclCoopCta> bar { coop, gin, ncclTeamTagWorld(), blockIdx.x };
-bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
 size_t my_window_offset = (token_idx * hidden_dim) * sizeof(float);
 
@@ -663,7 +663,7 @@ The normalized results are written back to all peer GPUs using remote **PUT** (`
 
 ```cuda
 // Release: publish normalization writes before Phase 3 PUTs
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 
 size_t final_token_offset = (token_idx * hidden_dim) * sizeof(float);
 my_window_offset = (blockIdx.x * hidden_dim) * sizeof(float);
@@ -680,13 +680,13 @@ for (int peer = threadIdx.x; peer < nRanks; peer += blockDim.x) {
 gin.waitSignal(coop, signalIndex, signalValue + 2 * devComm.nRanks);
 // Flush outbound Phase 3 PUTs so window_recv staging used as source is consumed.
 gin.flush(coop);
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 ```
 
 **Synchronization Strategy:**
-- **Initial barrier** (`cuda::memory_order_acquire`, `ncclGinFenceLevel::Relaxed`): Before Phase 1, aligns the per-block signal baseline before issuing **PUTs** (`gin.put`).
+- **Initial barrier** (`cuda::memory_order_acquire`, `ncclGinFenceLevel::None`): Before Phase 1, aligns the per-block signal baseline before issuing **PUTs** (`gin.put`).
 - **Phase 1 signal/flush**: **`waitSignal`** accounts for **inbound** signaled **PUTs** for **`token_idx`**; **`flush`** finishes **outbound** GIN so **PUT sources** are reusable.
-- **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::Relaxed`): Participates in the world-team barrier so each rank **releases** its Phase 2 stores before any rank starts Phase 3 **PUTs**; keeps cross-GPU phase ordering consistent with cumulative GIN signals.
+- **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::None`): Participates in the world-team barrier so each rank **releases** its Phase 2 stores before any rank starts Phase 3 **PUTs**; keeps cross-GPU phase ordering consistent with cumulative GIN signals.
 - **Signal accumulation (ties to `readSignal` / `waitSignal` above)**: The per-block counter is not reset between Phase 1 and Phase 3. After Phase 1 **`waitSignal`**, the signal has advanced by `nRanks` from the baseline (one **inbound** signaled **PUT** per peer for **`token_idx`**). After Phase 3 **`waitSignal`**, by another `nRanks` (second **inbound** all-gather round), so the final threshold is `signalValue + 2 * nRanks`.
 - **Barrier after Phase 3** (`cuda::memory_order_release`): World-team barrier so all ranks finish Phase 3 (GIN + visibility) before the kernel returns.
 
@@ -828,7 +828,7 @@ const int lsaSize = lsa.nRanks;
 const int numRemotePeers = world.nRanks - lsa.nRanks;
 
 ncclBarrierSession<ncclCoopCta> bar { coop, ncclTeamTagWorld(), gin, blockIdx.x };
-bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
 size_t my_window_offset = (token_idx * hidden_dim) * sizeof(float);
 
@@ -944,7 +944,7 @@ The normalized results are written back to all peer GPUs using the optimal commu
 
 ```cuda
 // Release: publish normalization writes before Phase 3 PUTs / LSA writes
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 
 size_t final_token_offset = (token_idx * hidden_dim) * sizeof(float);
 my_window_offset = (blockIdx.x * hidden_dim) * sizeof(float);
@@ -976,13 +976,13 @@ for (size_t offset = threadIdx.x; offset < hidden_dim; offset += blockDim.x) {
 gin.waitSignal(coop, signalIndex, signalValue + 2 * numRemotePeers);
 // Flush outbound GIN Phase 3 PUTs so window_recv staging used as source is consumed.
 gin.flush(coop);
-bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 ```
 
 **Hybrid Synchronization Strategy:**
 - **Initial barrier** (`cuda::memory_order_acquire`): Before Phase 1, ensures visibility of setup before reading/writing peer data.
 - **GIN signal after Phase 1** (**remote only**): `waitSignal` on `signalValue + numRemotePeers` until every remote peer has completed its **PUT** for its partial for **`token_idx`**; **`flush`** for outbound GIN source reuse; then **`bar.lsaBarrier().sync(..., acq_rel)`** so local LSA stores are visible before reduction.
-- **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::Relaxed`): Each rank releases its Phase 2 stores before any rank starts Phase 3; keeps cross-GPU phase ordering consistent with cumulative **remote** GIN signals.
+- **Barrier before Phase 3** (`cuda::memory_order_release`, `ncclGinFenceLevel::None`): Each rank releases its Phase 2 stores before any rank starts Phase 3; keeps cross-GPU phase ordering consistent with cumulative **remote** GIN signals.
 - **GIN signal after Phase 3** (**remote only**): `waitSignal` on `signalValue + 2 * numRemotePeers`; **`flush`** after; LSA Phase 3 copies fenced by **`bar.sync`**.
 - **Barrier after Phase 3** (`cuda::memory_order_release`): World-team barrier so all ranks finish Phase 3 (GIN + LSA + visibility) before kernel exit.
 

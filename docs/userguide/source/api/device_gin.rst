@@ -166,5 +166,7 @@ ncclGinBarrierSession
 
    .. cpp:function:: void sync(Coop coop, cuda::memory_order order, ncclGinFenceLevel fence)
 
-      Synchronizes all threads of all team members that participate in the barrier session. ``ncclGinFenceLevel::Relaxed`` is
-      the only defined value for *fence* for now.
+      Synchronizes all threads of all team members that participate in the barrier session. ``ncclGinFenceLevel::None`` is
+      the only defined value for *fence* for now (pure synchronization, no drain).
+      ``ncclGinFenceLevel::Relaxed`` is preserved as a deprecated alias for ``None`` for source-level backward compatibility;
+      new code should use ``None``.

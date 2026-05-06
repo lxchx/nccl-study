@@ -62,7 +62,7 @@
  *   - gin.flush completes outbound GIN operations locally so window_send / window_recv
  *     regions used as PUT sources can be safely reused (LSA paths unaffected).
  *   - World-team bar.sync (acquire at kernel entry; release before Phase 3;
- *     ncclGinFenceLevel::Relaxed) aligns cross-node phases. The Phase 1 reduction
+ *     ncclGinFenceLevel::None) aligns cross-node phases. The Phase 1 reduction
  *     consumes data after remote GIN signal waits and the LSA sub-barrier.
  *   - Signal thresholds accumulate across phases (no reset); each phase adds
  *     numRemotePeers remote SignalIncs to this block's signalIndex.
@@ -104,7 +104,7 @@ __global__ void RMSNormHybrid(ncclWindow_t window_send, ncclWindow_t window_recv
   const int numRemotePeers = world.nRanks - lsa.nRanks;
 
   ncclBarrierSession<ncclCoopCta> bar { coop, ncclTeamTagWorld(), gin, blockIdx.x };
-  bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
   //============================================================================
   // Phase 1: Reduce-Scatter via Hybrid LSA/GIN Communication
@@ -231,7 +231,7 @@ __global__ void RMSNormHybrid(ncclWindow_t window_send, ncclWindow_t window_recv
   //----------------------------------------------------------------------------
 
   // Release: publish normalization writes before Phase 3 PUTs / LSA writes
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 
   size_t final_token_offset = (token_idx * hidden_dim) * sizeof(float);
   my_window_offset = (blockIdx.x * hidden_dim) * sizeof(float);
@@ -263,7 +263,7 @@ __global__ void RMSNormHybrid(ncclWindow_t window_send, ncclWindow_t window_recv
   gin.waitSignal(coop, signalIndex, signalValue + 2 * numRemotePeers);
   // Flush outbound GIN Phase 3 PUTs so window_recv staging used as source is consumed.
   gin.flush(coop);
-  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(coop, cuda::memory_order_release, ncclGinFenceLevel::None);
 }
 
 //==============================================================================

@@ -332,7 +332,7 @@ collective using GIN.
     uint64_t signalValue = gin.readSignal(signalIndex);
 
     ncclGinBarrierSession<ncclCoopCta> bar { ncclCoopCta(), gin, ncclTeamTagWorld(), blockIdx.x };
-    bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+    bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int nthreads = blockDim.x * gridDim.x;
@@ -351,7 +351,7 @@ collective using GIN.
       gin.waitSignal(ncclCoopCta(), signalIndex, signalValue + devComm.nRanks);
 
     gin.flush(ncclCoopCta());
-    bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+    bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::None);
   }
 
 The above code excerpt shows the GIN-related host setup for NCCL 2.30 and later (highlighted lines) together with the

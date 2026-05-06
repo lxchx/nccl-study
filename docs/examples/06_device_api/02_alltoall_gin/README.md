@@ -84,7 +84,7 @@ GIN barriers enable cross-node synchronization from device code over the network
   uint64_t signalValue = gin.readSignal(signalIndex);
 
   ncclGinBarrierSession<ncclCoopCta> bar { ncclCoopCta(), gin, ncclTeamTagWorld(), blockIdx.x };
-  bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int nthreads = blockDim.x * gridDim.x;
@@ -115,7 +115,7 @@ Before the kernel returns, call **`gin.flush()`** so every previously issued out
     gin.waitSignal(ncclCoopCta(), signalIndex, signalValue + devComm.nRanks);
 
   gin.flush(ncclCoopCta());
-  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::None);
 ```
 
 ### Receiving CTA (Device-side)

@@ -82,7 +82,7 @@ __global__ void PureGinAlltoAllKernel(ncclWindow_t sendwin, size_t sendoffset,
   uint64_t signalValue = gin.readSignal(signalIndex);
 
   ncclGinBarrierSession<ncclCoopCta> bar { ncclCoopCta(), gin, ncclTeamTagWorld(), blockIdx.x };
-  bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::Relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_acquire, ncclGinFenceLevel::None);
 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int nthreads = blockDim.x * gridDim.x;
@@ -101,7 +101,7 @@ __global__ void PureGinAlltoAllKernel(ncclWindow_t sendwin, size_t sendoffset,
     gin.waitSignal(ncclCoopCta(), signalIndex, signalValue + devComm.nRanks);
 
   gin.flush(ncclCoopCta());
-  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::Relaxed);
+  bar.sync(ncclCoopCta(), cuda::memory_order_release, ncclGinFenceLevel::None);
 }
 
 // ==========================================================================

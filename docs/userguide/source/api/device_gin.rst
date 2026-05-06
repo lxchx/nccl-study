@@ -164,10 +164,11 @@ ncclGinBarrierSession
       This variant expects *team* to be passed as an argument, and also takes an extra *handle* argument indicating the
       location of the underlying barriers (typically set to the ``railGinBarrier`` field of the device communicator).
 
-   .. cpp:function:: void sync(Coop coop, cuda::memory_order order, ncclGinFenceLevel fence)
+   .. cpp:function:: void sync(Coop coop, cuda::memory_order order, ncclGinFenceLevel fence = ncclGinFenceLevel::All)
 
       Synchronizes all threads of all team members that participate in the barrier session. The *fence* argument selects
-      which prior network operations on the bound GIN context must be complete after the barrier returns:
+      which prior network operations on the bound GIN context must be complete after the barrier returns; if omitted it
+      defaults to ``ncclGinFenceLevel::All`` so callers who do not opt in explicitly get the strongest guarantee:
 
       * ``ncclGinFenceLevel::None`` — pure synchronization, no drain.
       * ``ncclGinFenceLevel::Put`` — all prior puts from this rank on the bound GIN context have settled at their

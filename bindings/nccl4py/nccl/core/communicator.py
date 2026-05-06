@@ -520,6 +520,7 @@ class NCCLDevCommRequirements:
         gin_exclusive_contexts: bool = False,
         gin_queue_depth: int = 0,
         world_gin_barrier_count: int = 0,
+        gin_strong_signals_required: bool = True,
     ) -> None:
         """Initializes NCCL device communicator requirements.
 
@@ -551,6 +552,10 @@ class NCCLDevCommRequirements:
             gin_queue_depth: GIN queue depth. Defaults to 0.
             world_gin_barrier_count: Number of world GIN barriers. Defaults
                 to 0.
+            gin_strong_signals_required: Whether GIN strong signals are
+                required by kernels using this devComm. When False, using
+                GIN strong signals results in undefined behavior. Defaults
+                to True.
         """
         # Initialize the low-level binding object
         self._reqs = _nccl_bindings.DevCommRequirements()
@@ -579,6 +584,7 @@ class NCCLDevCommRequirements:
         self.gin_exclusive_contexts = gin_exclusive_contexts
         self.gin_queue_depth = gin_queue_depth
         self.world_gin_barrier_count = world_gin_barrier_count
+        self.gin_strong_signals_required = gin_strong_signals_required
 
     @property
     def lsa_multimem(self) -> bool:
@@ -707,6 +713,18 @@ class NCCLDevCommRequirements:
         self._reqs.world_gin_barrier_count = value
 
     @property
+    def gin_strong_signals_required(self) -> bool:
+        """Whether GIN strong signals are required by kernels using this devComm.
+
+        When False, using GIN strong signals results in undefined behavior.
+        """
+        return bool(self._reqs.gin_strong_signals_required)
+
+    @gin_strong_signals_required.setter
+    def gin_strong_signals_required(self, value: bool) -> None:
+        self._reqs.gin_strong_signals_required = int(value)
+
+    @property
     def ptr(self) -> int:
         """Raw pointer to the underlying ncclDevCommRequirements_t structure."""
         return self._reqs.ptr
@@ -744,6 +762,8 @@ class NCCLDevCommRequirements:
             parts.append(f"gin_queue_depth={self.gin_queue_depth}")
         if self.world_gin_barrier_count != 0:
             parts.append(f"world_gin_barrier_count={self.world_gin_barrier_count}")
+        if not self.gin_strong_signals_required:  # Default is True
+            parts.append(f"gin_strong_signals_required={self.gin_strong_signals_required}")
 
         if parts:
             return f"<NCCLDevCommRequirements: {', '.join(parts)}>"

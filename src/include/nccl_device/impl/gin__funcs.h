@@ -81,6 +81,23 @@ NCCL_DEVICE_INLINE void advanceSegmentCursor(
 // Common initialization helper for GIN backend
 template<typename GinType>
 NCCL_DEVICE_INLINE void ncclGinInitCommon(GinType* gin, ncclDevComm const& comm, int contextIndex) {
+  // Detect sentinel context-index values before applying the connection-modulo arithmetic
+  // below. The modulo is undefined for negative ints; handling sentinels first avoids that
+  // and gives ALL its multi-context semantics.
+  if (contextIndex == NCCL_GIN_CONTEXT_ALL) {
+    // Multi-context fence: ncclGin_flushAll iterates every context. Single-context ops
+    // fall back to context 0.
+    gin->isAllContexts = 1;
+    contextIndex = 0;
+  } else if (contextIndex == NCCL_GIN_CONTEXT_ANY) {
+    // Reserved; deterministic fallback to context 0. Future PR will dispatch via
+    // blockIdx.x % comm.ginContextCount with fast modulo.
+    gin->isAllContexts = 0;
+    contextIndex = 0;
+  } else {
+    gin->isAllContexts = 0;
+  }
+
   gin->nConnections = comm.ginConnectionCount;
 
   static_assert(NCCL_GIN_MAX_CONNECTIONS == 4, "Required for following modulo hack to work.");
@@ -96,6 +113,24 @@ NCCL_DEVICE_INLINE void ncclGinInitCommon(GinType* gin, ncclDevComm const& comm,
   gin->_ginBackend = comm.ginNetDeviceTypes[gin->connectionId];
   gin->_ginHandle = comm.ginHandles[gin->connectionId];
   gin->_signalShadows = comm.ginSignalShadows + contextIndex * comm.ginSignalCount;
+}
+
+// Flush wrapper used by the barrier's fence implementation.
+//
+// When the gin object was constructed with NCCL_GIN_CONTEXT_ALL, iterate over every GIN
+// context on the comm and flush each in turn — extending fence semantics to all contexts.
+// Otherwise behaves identically to gin.flush(coop, ord). Single-context behavior is
+// unchanged: callers passing a regular contextIndex pay no extra cost.
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGin_flushAll(ncclGin const& gin, Coop coop, cuda::memory_order ord) {
+  if (gin.isAllContexts) {
+    for (uint32_t i = 0; i < gin.comm.ginContextCount; ++i) {
+      ncclGin scratch(gin.comm, (int)i, gin.resourceSharingMode);
+      scratch.flush(coop, ord);
+    }
+  } else {
+    gin.flush(coop, ord);
+  }
 }
 
 template<unsigned beMask>

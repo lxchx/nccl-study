@@ -81,7 +81,7 @@ using ncclGin = ncclGin_BackendMask<NCCL_GIN_BACKEND_MASK_ALL>;
 #if NCCL_CHECK_CUDACC
 struct ncclGin_C {
   ncclDevComm const& comm;
-  uint32_t nConnections:8, connectionId:8, _ginBackend:8;
+  uint32_t nConnections:8, connectionId:8, _ginBackend:8, isAllContexts:1;
   uint32_t contextId;
   ncclGinResourceSharingMode resourceSharingMode;
 
@@ -213,7 +213,7 @@ NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE uint64_t* ncclGinGetSignalShadowPtr(
 template<unsigned backendMask>
 struct ncclGin_BackendMask {
   ncclDevComm const& comm;
-  uint32_t nConnections:8, connectionId:8, _ginBackend:8;
+  uint32_t nConnections:8, connectionId:8, _ginBackend:8, isAllContexts:1;
   uint32_t contextId;
   // Runtime-selected resource sharing mode for this context.
   ncclGinResourceSharingMode resourceSharingMode;

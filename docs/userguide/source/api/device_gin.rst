@@ -23,6 +23,16 @@ ncclGin
       performance-oriented kernels should cycle among the available contexts to improve resource utilization (the number of
       available contexts is available via :c:macro:`ginContextCount`).
 
+      Two sentinel values are reserved for *contextIndex*:
+
+      * :c:macro:`NCCL_GIN_CONTEXT_ALL` (``-1``): when this gin is passed to a barrier with ``fence != None``, the barrier's
+        flush iterates every GIN context on the comm — extending fence semantics across all contexts at once. Useful when
+        operations have been sharded across multiple contexts (e.g. multi-NIC) and a single barrier call needs to drain all
+        of them. Single-context operations (``put``/``get``/``signal``/``wait``) on a gin constructed with this sentinel fall
+        back to context 0; using such a gin for non-barrier work is not recommended.
+      * :c:macro:`NCCL_GIN_CONTEXT_ANY` (``-2``): reserved for a future ergonomic feature (auto-pick a context per CTA).
+        Currently falls back to context 0 deterministically; **do not use yet**.
+
    .. cpp:function:: void put(ncclTeam team, int peer, ncclWindow_t dstWnd, size_t dstOffset, ncclWindow_t srcWnd, \
       size_t srcOffset, size_t bytes, \
       RemoteAction remoteAction, LocalAction localAction, Coop coop, DescriptorSmem descriptor, \
@@ -170,11 +180,11 @@ ncclGinBarrierSession
       which prior network operations on the bound GIN context must be complete after the barrier returns; if omitted it
       defaults to ``ncclGinFenceLevel::All`` so callers who do not opt in explicitly get the strongest guarantee:
 
-      * ``ncclGinFenceLevel::None`` — pure synchronization, no drain.
-      * ``ncclGinFenceLevel::Put`` — all prior puts from this rank on the bound GIN context have settled at their
+      * ``ncclGinFenceLevel::None``: pure synchronization, no drain.
+      * ``ncclGinFenceLevel::Put``: all prior puts from this rank on the bound GIN context have settled at their
         destinations. Internally this issues a ``flush`` on the context before signaling, so that peers, upon observing
         this rank's signal, see this rank's outgoing data already present in their memory.
-      * ``ncclGinFenceLevel::Get`` — all prior gets from this rank on the bound GIN context have landed in this rank's
+      * ``ncclGinFenceLevel::Get``: all prior gets from this rank on the bound GIN context have landed in this rank's
         local memory. Internally this issues a ``flush`` on the context after the per-peer signal/wait loop, draining any
         in-flight RDMA-Read responses so the local buffers used as GET destinations are populated when the barrier returns.
       * ``ncclGinFenceLevel::All``: both ``Put`` and ``Get`` guarantees hold. Internally this issues both flushes (one

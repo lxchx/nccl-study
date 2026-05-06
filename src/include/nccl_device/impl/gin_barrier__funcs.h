@@ -53,10 +53,12 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   this->coop.sync();
   // For fence=Put or fence=All: drain prior outgoing puts on this context before signaling so
   // peers, upon observing our signal, see our outgoing data already settled at their
-  // destinations. The release-order argument is passed through to the proxy backend; GDAKI
-  // ignores it (DOCA already guarantees memory_order_acquire on flush completion).
+  // destinations. ncclGin_flushAll iterates every context if this gin was constructed with
+  // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. The
+  // release-order argument is passed through to the proxy backend; GDAKI ignores it
+  // (DOCA already guarantees memory_order_acquire on flush completion).
   if (fence == ncclGinFenceLevel::Put || fence == ncclGinFenceLevel::All) {
-    this->net.flush(this->coop, nccl::utility::releaseOrderOf(ord));
+    ncclGin_flushAll(this->net, this->coop, nccl::utility::releaseOrderOf(ord));
   }
   if NCCL_IF_CONSTEXPR (EnableTimeout) {
     startCycle = clock64();
@@ -95,9 +97,11 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   // For fence=Get or fence=All: drain prior outgoing gets on this context after waiting so
   // that, on successful barrier exit, all RDMA-Read responses targeting this rank's local
   // buffers have been DMA'd into GPU memory and are visible after the trailing coop.sync().
-  // Skipped on the timeout path (control jumps directly to exit: with ret = ncclTimeout).
+  // ncclGin_flushAll iterates every context if this gin was constructed with
+  // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. Skipped on
+  // the timeout path (control jumps directly to exit: with ret = ncclTimeout).
   if (fence == ncclGinFenceLevel::Get || fence == ncclGinFenceLevel::All) {
-    this->net.flush(this->coop, nccl::utility::acquireOrderOf(ord));
+    ncclGin_flushAll(this->net, this->coop, nccl::utility::acquireOrderOf(ord));
   }
   goto exit; // Silence a compiler warning.
 exit:

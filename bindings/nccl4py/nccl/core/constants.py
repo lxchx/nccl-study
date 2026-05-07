@@ -46,39 +46,56 @@ class CTAPolicy(IntFlag):
     use different scheduling in different cases.
     """
 
-    Default = 0x00
+    DEFAULT = 0x00
     """Default CTA policy."""
-    Efficiency = 0x01
+    EFFICIENCY = 0x01
     """Optimize for efficiency."""
-    Zero = 0x02
+    ZERO = 0x02
     """Zero-CTA optimization."""
+
+    # Backward-compat aliases (PascalCase forms from the prior public API).
+    Default = 0x00
+    Efficiency = 0x01
+    Zero = 0x02
 
 
 # Communicator shrink flags
 class CommShrinkFlag(IntEnum):
     """Flags for ncclCommShrink behavior."""
 
-    Default = 0x00
+    DEFAULT = 0x00
     """Shrink the parent communicator."""
-    Abort = 0x01
+    ABORT = 0x01
     """First terminate ongoing parent operations, then shrink the parent communicator."""
+
+    # Backward-compat aliases.
+    Default = 0x00
+    Abort = 0x01
 
 
 # Communicator suspend flags
 class CommSuspendFlag(IntFlag):
     """Flags for ncclCommSuspend behavior."""
 
-    Mem = 0x01
+    MEM = 0x01
     """Suspend memory (release dynamic GPU memory allocations)."""
+
+    # Backward-compat alias.
+    Mem = 0x01
 
 
 # Window registration flags
 class WindowFlag(IntFlag):
     """Flags for window registration."""
 
-    Default = 0x00
+    DEFAULT = 0x00
     """Default window registration."""
-    CollSymmetric = 0x01
+    COLL_SYMMETRIC = 0x01
     """Collective symmetric window registration."""
-    StrictOrdering = 0x02
+    STRICT_ORDERING = 0x02
     """Strict ordering for window operations."""
+
+    # Backward-compat aliases.
+    Default = 0x00
+    CollSymmetric = 0x01
+    StrictOrdering = 0x02

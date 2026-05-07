@@ -123,7 +123,7 @@ class NCCLConfig:
             collnet_enable: Enable (True) or disable (False) IB SHARP.
                 NCCL default: False.
             cta_policy: CTA scheduling policy. NCCL default:
-                CTAPolicy.Default.
+                CTAPolicy.DEFAULT.
             shrink_share: Share resources with the child communicator during
                 shrink. NCCL default: False.
             nvls_ctas: Total number of CTAs for NVLS kernels (positive
@@ -368,7 +368,7 @@ class NCCLConfig:
 
     @property
     def cta_policy(self) -> CTAPolicy:
-        """CTA scheduling policy. Default: CTAPolicy.Default."""
+        """CTA scheduling policy. Default: CTAPolicy.DEFAULT."""
         return CTAPolicy(self._cfg.cta_policy)
 
     @cta_policy.setter
@@ -1062,7 +1062,7 @@ class Communicator:
         self,
         exclude_ranks: Sequence[int] | None = None,
         config: NCCLConfig | None = None,
-        flag: CommShrinkFlag = CommShrinkFlag.Default,
+        flag: CommShrinkFlag = CommShrinkFlag.DEFAULT,
     ) -> Communicator:
         """Creates a new communicator by removing specified ranks from this one.
 
@@ -1072,10 +1072,10 @@ class Communicator:
 
         This is a collective operation. All non-excluded ranks must call this
         method; excluded ranks must NOT call it. With
-        :py:attr:`~nccl.core.CommShrinkFlag.Default` there must be no
+        :py:attr:`~nccl.core.CommShrinkFlag.DEFAULT` there must be no
         outstanding NCCL operations to avoid deadlock; combine with
         ``config.shrink_share=True`` to reuse parent communicator resources.
-        With :py:attr:`~nccl.core.CommShrinkFlag.Abort` outstanding
+        With :py:attr:`~nccl.core.CommShrinkFlag.ABORT` outstanding
         operations are automatically aborted and no resources are shared
         with the parent.
 
@@ -1085,10 +1085,10 @@ class Communicator:
             config: Configuration for the new communicator. If None, inherits
                 the parent's configuration. Defaults to None.
             flag: Shrink behavior. Use
-                :py:attr:`~nccl.core.CommShrinkFlag.Default` for normal
-                operation or :py:attr:`~nccl.core.CommShrinkFlag.Abort`
+                :py:attr:`~nccl.core.CommShrinkFlag.DEFAULT` for normal
+                operation or :py:attr:`~nccl.core.CommShrinkFlag.ABORT`
                 after errors. Defaults to
-                :py:attr:`~nccl.core.CommShrinkFlag.Default`.
+                :py:attr:`~nccl.core.CommShrinkFlag.DEFAULT`.
 
         Returns:
             New communicator without the excluded ranks.
@@ -1295,7 +1295,7 @@ class Communicator:
         self._check_valid("revoke")
         _nccl_bindings.comm_revoke(self._comm, flags)
 
-    def suspend(self, flags: CommSuspendFlag = CommSuspendFlag.Mem) -> None:
+    def suspend(self, flags: CommSuspendFlag = CommSuspendFlag.MEM) -> None:
         """Suspends communicator operations to free resources.
 
         The communicator cannot be used for communication while suspended.
@@ -1303,7 +1303,7 @@ class Communicator:
 
         Args:
             flags: Suspend flags controlling what resources to release.
-                :py:attr:`~nccl.core.CommSuspendFlag.Mem` releases dynamic
+                :py:attr:`~nccl.core.CommSuspendFlag.MEM` releases dynamic
                 GPU memory allocations.
 
         Raises:
@@ -2284,7 +2284,7 @@ class Communicator:
         Args:
             buffer: Local buffer to register as a window.
             flags: Window registration flags. Defaults to None
-                (:py:attr:`~nccl.core.WindowFlag.Default`).
+                (:py:attr:`~nccl.core.WindowFlag.DEFAULT`).
 
         Returns:
             :py:class:`~nccl.core.RegisteredWindowHandle` for the registered
@@ -2535,7 +2535,7 @@ class Communicator:
             stat: The memory statistic to query.
 
         Returns:
-            The memory statistic value (bytes, or 0/1 for GpuMemSuspended).
+            The memory statistic value (bytes, or 0/1 for GPU_MEM_SUSPENDED).
 
         Raises:
             NcclInvalid: If the communicator is not initialized.

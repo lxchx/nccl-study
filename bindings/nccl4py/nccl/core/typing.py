@@ -92,20 +92,26 @@ class NcclCommMemStat(IntEnum):
 
     Used as the ``stat`` argument of :py:meth:`Communicator.get_mem_stat`
     to identify which memory statistic to query. All values are returned
-    in bytes except :py:attr:`GpuMemSuspended`, which is a 0/1 flag.
+    in bytes except :py:attr:`GPU_MEM_SUSPENDED`, which is a 0/1 flag.
     """
 
-    GpuMemSuspend = 0
+    GPU_MEM_SUSPEND = 0
     """Communicator-allocated GPU memory that can be released by
     :py:meth:`Communicator.suspend` (bytes)."""
-    GpuMemSuspended = 1
+    GPU_MEM_SUSPENDED = 1
     """Whether communicator-allocated GPU memory is currently suspended
     (``0`` = active, ``1`` = suspended)."""
-    GpuMemPersist = 2
+    GPU_MEM_PERSIST = 2
     """Communicator-allocated GPU memory that cannot be suspended
     (bytes)."""
-    GpuMemTotal = 3
+    GPU_MEM_TOTAL = 3
     """Total communicator-allocated GPU memory tracked by NCCL (bytes)."""
+
+    # Backward-compat aliases mirroring nccl.bindings.CommMemStat camelCase.
+    GpuMemSuspend = 0
+    GpuMemSuspended = 1
+    GpuMemPersist = 2
+    GpuMemTotal = 3
 
 
 class NcclRedOp(IntEnum):

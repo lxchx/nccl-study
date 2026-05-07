@@ -182,14 +182,14 @@ class RegisteredWindowHandle(CommResource):
             buffer_ptr: Device pointer to the buffer.
             size: Size of the window in bytes.
             flags: Window registration flags. Defaults to None
-                (:py:attr:`~nccl.core.WindowFlag.Default`).
+                (:py:attr:`~nccl.core.WindowFlag.DEFAULT`).
 
         Raises:
             NcclInvalid: If comm_ptr is 0 (invalid communicator).
         """
         self._buffer_ptr = buffer_ptr
         self._size = size
-        self._flags = flags if flags is not None else WindowFlag.Default
+        self._flags = flags if flags is not None else WindowFlag.DEFAULT
         self._handle: int | None = None
         super().__init__(comm_ptr)
         self._allocate()

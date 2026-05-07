@@ -124,7 +124,7 @@ static void rasConnOpen(struct rasConnection* conn) {
   int ready;
 
   NCCLCHECKGOTO(getNewSockEntry(&sock), ret, fail);
-  NCCLCHECKGOTO(ncclSocketInit(&sock->sock, &conn->addr, NCCL_SOCKET_MAGIC, ncclSocketTypeRasNetwork, nullptr,
+  NCCLCHECKGOTO(ncclSocketInit(&sock->sock, &conn->addr, ncclSocketDefaultMagic(), ncclSocketTypeRasNetwork, nullptr,
                                /*asyncFlag*/1, /*customRetry*/1), ret, fail);
   closeSocketOnFail = true;
   NCCLCHECKGOTO(ncclSocketConnect(&sock->sock), ret, fail);
@@ -402,7 +402,7 @@ ncclResult_t rasNetAcceptNewSocket() {
   bool socketInitialized = false;
   NCCLCHECKGOTO(getNewSockEntry(&sock), ret, fail);
 
-  NCCLCHECKGOTO(ncclSocketInit(&sock->sock, nullptr, NCCL_SOCKET_MAGIC, ncclSocketTypeRasNetwork, nullptr,
+  NCCLCHECKGOTO(ncclSocketInit(&sock->sock, nullptr, ncclSocketDefaultMagic(), ncclSocketTypeRasNetwork, nullptr,
                                /*asyncFlag*/1), ret, fail);
   socketInitialized = true;
   NCCLCHECKGOTO(ncclSocketAccept(&sock->sock, &rasNetListeningSocket), ret, fail);

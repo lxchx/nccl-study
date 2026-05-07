@@ -9,16 +9,42 @@
 #include "utils.h"
 #include "os.h"
 #include <stdlib.h>
+#include <cstdlib>
 
 #include "param.h"
 #include <time.h>
 #include <atomic>
+#include <mutex>
 
 NCCL_PARAM(RetryCnt, "SOCKET_RETRY_CNT", 34);
 NCCL_PARAM(RetryTimeOut, "SOCKET_RETRY_SLEEP_MSEC", 100);
 NCCL_PARAM(PollTimeOut, "SOCKET_POLL_TIMEOUT_MSEC", 0);
 NCCL_PARAM(SocketMaxRecvBuff, "SOCKET_RCVBUF", -1);
 NCCL_PARAM(SocketMaxSendBuff, "SOCKET_SNDBUF", -1);
+
+uint64_t ncclSocketDefaultMagic(void) {
+  /* Default is the historical constant; env may override on first init. */
+  static uint64_t cached = NCCL_SOCKET_MAGIC;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const char* env = ncclGetEnv("NCCL_SOCKET_MAGIC");
+    bool fromEnv = false;
+    if (env != NULL && env[0] != '\0') {
+      char* endptr = NULL;
+      unsigned long long v = std::strtoull(env, &endptr, 0);
+      if (endptr != env && endptr != NULL && *endptr == '\0') {
+        cached = (uint64_t)v;
+        fromEnv = true;
+      } else {
+        INFO(NCCL_ENV, "NCCL_SOCKET_MAGIC invalid value \"%s\", using built-in default", env);
+      }
+    }
+    INFO(NCCL_ENV, "Socket handshake magic 0x%016llx (%s)",
+         (unsigned long long)cached,
+         fromEnv ? "NCCL_SOCKET_MAGIC" : "built-in default");
+  });
+  return cached;
+}
 
 static ncclResult_t socketProgress(int op, struct ncclSocket* sock, void* ptr, int size, int* offset, int* pclosed = NULL) {
   int closed;
@@ -306,6 +332,8 @@ static ncclResult_t socketFinalizeAccept(struct ncclSocket* sock) {
     if (sock->asyncFlag == 0) {
       received = 0;
       if (socketWait(NCCL_SOCKET_RECV, sock, &magic, sizeof(magic), &received) != ncclSuccess) {
+        INFO(NCCL_NET|NCCL_INIT, "socketFinalizeAccept: handshake receive from %s failed, discarding peer connection",
+             ncclSocketToString(&sock->addr, line));
         ncclOsSocketResetAccept(sock);
         return ncclSuccess;
       }
@@ -316,6 +344,8 @@ static ncclResult_t socketFinalizeAccept(struct ncclSocket* sock) {
       sock->finalizeCounter = received;
       if (received < sizeof(magic)) {
         if (closed) {
+          INFO(NCCL_NET|NCCL_INIT, "socketFinalizeAccept: peer %s closed before magic handshake, discarding",
+               ncclSocketToString(&sock->addr, line));
           ncclOsSocketResetAccept(sock);
         }
         return ncclSuccess;
@@ -323,6 +353,8 @@ static ncclResult_t socketFinalizeAccept(struct ncclSocket* sock) {
       memcpy(&magic, sock->finalizeBuffer, sizeof(magic));
     }
     if (magic != sock->magic) {
+      INFO(NCCL_NET|NCCL_INIT, "socketFinalizeAccept from %s: socket magic mismatch (peer 0x%016llx != expected 0x%016llx), discarding peer connection",
+        ncclSocketToString(&sock->addr, line), (unsigned long long)magic, (unsigned long long)sock->magic);
       ncclOsSocketResetAccept(sock);
       sock->state = ncclSocketStateBadMagic;
       return ncclSuccess;
@@ -339,10 +371,10 @@ static ncclResult_t socketFinalizeAccept(struct ncclSocket* sock) {
     memcpy(&type, sock->finalizeBuffer, sizeof(type));
   }
   if (type != sock->type) {
-    WARN("socketFinalizeAccept from %s: wrong type %d != %d", ncclSocketToString(&sock->addr, line), type, sock->type);
-    (void) ncclSocketClose(sock);
-    sock->state = ncclSocketStateError;
-    return ncclInternalError;
+    INFO(NCCL_NET|NCCL_INIT, "socketFinalizeAccept from %s: wrong socket type (peer %d != expected %d -- peer connected to wrong NCCL socket), discarding peer connection",
+         ncclSocketToString(&sock->addr, line), (int)type, (int)sock->type);
+    ncclOsSocketResetAccept(sock);
+    return ncclSuccess;
   } else {
     sock->state = ncclSocketStateReady;
   }

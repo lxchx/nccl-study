@@ -62,6 +62,22 @@ Values accepted
 
 Set to ``AF_INET`` to force the use of IPv4, or ``AF_INET6`` to force IPv6 usage.
 
+.. _NCCL_SOCKET_MAGIC:
+
+NCCL_SOCKET_MAGIC
+-----------------
+
+The ``NCCL_SOCKET_MAGIC`` variable overrides the 64-bit magic value used in NCCL's internal TCP socket handshake for transports that rely on it (for example the Socket network plugin and InfiniBand connection bootstrap sockets). It does **not** change bootstrap communicators that use ``NCCL_COMM_ID`` or :c:func:`ncclGetUniqueId`; those use a separate per-communicator magic.
+
+Setting the same value on every process in a job (for example ``0x$(printf '%x' "$SLURM_JOB_ID")`` under Slurm) can reduce accidental cross-talk when unrelated workloads share nodes and ports.
+
+Values accepted
+^^^^^^^^^^^^^^^
+
+Unset or empty: NCCL uses the historical built-in default.
+
+Otherwise: a non-negative integer in decimal or hexadecimal (with optional ``0x`` prefix), parsed as for ``strtoull(..., 0)``. Invalid strings fall back to the built-in default with a warning.
+
 NCCL_SOCKET_RETRY_CNT
 -----------------------------
 (since 2.24)

@@ -70,7 +70,7 @@ NCCL_IR_EXTERN_C __device__ void ncclGinBarrierSessionSync(
     ncclGinBarrierSession_C* session,
     ncclCoopAny coop,
     cuda::memory_order order,
-    ncclGinFenceLevel fence = ncclGinFenceLevel::All);
+    ncclGinFenceLevel fence = ncclGinFenceLevel::Put | ncclGinFenceLevel::Get);
 
 /* Barrier Session APIs */
 NCCL_IR_EXTERN_C __device__ void ncclBarrierSessionInit(
@@ -88,7 +88,7 @@ NCCL_IR_EXTERN_C __device__ void ncclBarrierSessionSync(
     ncclBarrierSession_C* session,
     ncclCoopAny coop,
     cuda::memory_order order,
-    ncclGinFenceLevel fence = ncclGinFenceLevel::All);
+    ncclGinFenceLevel fence = ncclGinFenceLevel::Put | ncclGinFenceLevel::Get);
 
 #endif // _NCCL_DEVICE_WRAPPER_H_
 

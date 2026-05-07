@@ -51,13 +51,13 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   uint64_t startCycle;
   ncclResult_t ret = ncclSuccess;
   this->coop.sync();
-  // For fence=Put or fence=All: drain prior outgoing puts on this context before signaling so
+  // For fence containing Put: drain prior outgoing puts on this context before signaling so
   // peers, upon observing our signal, see our outgoing data already settled at their
   // destinations. ncclGin_flushAll iterates every context if this gin was constructed with
   // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. The
-  // release-order argument is passed through to the proxy backend; GDAKI ignores it
-  // (DOCA already guarantees memory_order_acquire on flush completion).
-  if (fence == ncclGinFenceLevel::Put || fence == ncclGinFenceLevel::All) {
+  // release-order argument is passed through to the proxy backend; GDAKI ignores it (DOCA
+  // already guarantees memory_order_acquire on flush completion).
+  if ((fence & ncclGinFenceLevel::Put) != ncclGinFenceLevel::None) {
     ncclGin_flushAll(this->net, this->coop, nccl::utility::releaseOrderOf(ord));
   }
   if NCCL_IF_CONSTEXPR (EnableTimeout) {
@@ -94,13 +94,13 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
       this->net.waitSignal(ncclCoopThread(), this->signal + peer, waitVal, 32, nccl::utility::acquireOrderOf(ord));
     }
   }
-  // For fence=Get or fence=All: drain prior outgoing gets on this context after waiting so
-  // that, on successful barrier exit, all RDMA-Read responses targeting this rank's local
-  // buffers have been DMA'd into GPU memory and are visible after the trailing coop.sync().
+  // For fence containing Get: drain prior outgoing gets on this context after waiting so that,
+  // on successful barrier exit, all RDMA-Read responses targeting this rank's local buffers
+  // have been DMA'd into GPU memory and are visible after the trailing coop.sync().
   // ncclGin_flushAll iterates every context if this gin was constructed with
   // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. Skipped on
   // the timeout path (control jumps directly to exit: with ret = ncclTimeout).
-  if (fence == ncclGinFenceLevel::Get || fence == ncclGinFenceLevel::All) {
+  if ((fence & ncclGinFenceLevel::Get) != ncclGinFenceLevel::None) {
     ncclGin_flushAll(this->net, this->coop, nccl::utility::acquireOrderOf(ord));
   }
   goto exit; // Silence a compiler warning.

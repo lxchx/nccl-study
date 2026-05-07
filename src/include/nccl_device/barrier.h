@@ -41,7 +41,7 @@ struct ncclBarrierSession: ncclBarrierSession_internal<Coop> {
   NCCL_DEVICE_INLINE ncclLsaBarrierSession<Coop>& lsaBarrier();
   NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>& ginBarrier();
 
-  NCCL_DEVICE_INLINE void sync(Coop, cuda::memory_order, ncclGinFenceLevel = ncclGinFenceLevel::All);
+  NCCL_DEVICE_INLINE void sync(Coop, cuda::memory_order, ncclGinFenceLevel = ncclGinFenceLevel::Put | ncclGinFenceLevel::Get);
   NCCL_DEVICE_INLINE ncclResult_t sync(Coop, cuda::memory_order, ncclGinFenceLevel, uint64_t timeoutCycles);
 };
 #endif

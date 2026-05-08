@@ -69,7 +69,18 @@ ncclResult_t ncclCeInit(struct ncclComm* comm);
 
 ncclResult_t ncclCeFinalize(struct ncclComm* comm);
 
-ncclResult_t ncclMemOpSync(struct ncclComm* comm, struct ncclCeCollArgs* args, cudaStream_t stream);
+// Intra-LSA-rank barrier.
+ncclResult_t ncclMemOpSync(struct ncclComm* comm, cudaStream_t stream,
+                           struct ncclCeCollArgs* profilerArgs = nullptr);
+
+// Allocate / free internal arrays for a batch-ops parameter struct.
+ncclResult_t ncclCeInitBatchOpsParams(struct ncclCeBatchOpsParams* params, int capacity);
+void ncclCeFreeBatchOpsParams(struct ncclCeBatchOpsParams* params);
+
+// Launch a batch of cudaMemcpyAsync ops
+ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm,
+                                  struct ncclCeBatchOpsParams* params, cudaStream_t stream,
+                                  struct ncclCeCollArgs* profilerArgs = nullptr);
 
 ncclResult_t ncclLaunchCeColl(struct ncclComm* comm, struct ncclKernelPlan* plan);
 

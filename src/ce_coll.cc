@@ -222,8 +222,9 @@ fail:
   goto exit;
 }
 
-// Intra-node synchronization through memory operations
-ncclResult_t ncclMemOpSync(struct ncclComm* comm, struct ncclCeCollArgs* args, cudaStream_t stream) {
+// Intra-LSA-rank synchronization through memory operations.
+ncclResult_t ncclMemOpSync(struct ncclComm* comm, cudaStream_t stream,
+                           struct ncclCeCollArgs* profilerArgs) {
   ncclResult_t ret = ncclSuccess;
   void* ceSyncHandle = NULL;
   int lsaSize = comm->devrState.lsaSize;
@@ -239,8 +240,8 @@ ncclResult_t ncclMemOpSync(struct ncclComm* comm, struct ncclCeCollArgs* args, c
   size_t opIdx = 0;
   CUstreamBatchMemOpParams* batchParams = nullptr;
 
-  // Start CE sync profiling
-  NCCLCHECKGOTO(ncclProfilerStartCeSyncEvent(comm, args, stream, &ceSyncHandle),
+  // Start CE sync profiling (no-op if profilerArgs is nullptr)
+  NCCLCHECKGOTO(ncclProfilerStartCeSyncEvent(comm, profilerArgs, stream, &ceSyncHandle),
                 ret, fail);
 
   // Prepare batch memory operations for synchronization
@@ -279,7 +280,7 @@ fail:
   goto exit;
 }
 
-ncclResult_t ncclCeInitBatchOpsParams(struct ncclCeBatchOpsParams* params, int nRanks) {
+ncclResult_t ncclCeInitBatchOpsParams(struct ncclCeBatchOpsParams* params, int capacity) {
   ncclResult_t ret = ncclSuccess;
 
   void** srcs = nullptr;
@@ -290,12 +291,12 @@ ncclResult_t ncclCeInitBatchOpsParams(struct ncclCeBatchOpsParams* params, int n
   size_t* attrIdxs = nullptr;
 #endif
 
-  NCCLCHECKGOTO(ncclCalloc(&srcs, nRanks), ret, fail);
-  NCCLCHECKGOTO(ncclCalloc(&dsts, nRanks), ret, fail);
-  NCCLCHECKGOTO(ncclCalloc(&sizes, nRanks), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&srcs, capacity), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&dsts, capacity), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&sizes, capacity), ret, fail);
 #if CUDART_VERSION >= 12080
-  NCCLCHECKGOTO(ncclCalloc(&attrs, nRanks), ret, fail);
-  NCCLCHECKGOTO(ncclCalloc(&attrIdxs, nRanks), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&attrs, capacity), ret, fail);
+  NCCLCHECKGOTO(ncclCalloc(&attrIdxs, capacity), ret, fail);
 #endif
 
 exit:
@@ -344,8 +345,9 @@ void ncclCeFreeBatchOpsParams(struct ncclCeBatchOpsParams* params) {
 #endif
 }
 
-ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm, struct ncclCeCollArgs* args,
-                                  struct ncclCeBatchOpsParams* params, cudaStream_t stream) {
+ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm,
+                                  struct ncclCeBatchOpsParams* params, cudaStream_t stream,
+                                  struct ncclCeCollArgs* profilerArgs) {
   ncclResult_t ret = ncclSuccess;
   bool capturing;
   int driverVersion;
@@ -356,8 +358,8 @@ ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm, struct ncclCeCollArgs* 
   bool isLegacyStream;
   NCCLCHECKGOTO(ncclCudaStreamIsLegacyNull(stream, &isLegacyStream), ret, fail);
 
-  // Start CE batch profiling
-  NCCLCHECKGOTO(ncclProfilerStartCeBatchEvent(comm, args, params, stream, &ceBatchHandle),
+  // Start CE batch profiling (no-op if profilerArgs is nullptr)
+  NCCLCHECKGOTO(ncclProfilerStartCeBatchEvent(comm, profilerArgs, params, stream, &ceBatchHandle),
                 ret, fail);
 
   // Check if there are any operations to perform
@@ -380,12 +382,12 @@ ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm, struct ncclCeCollArgs* 
         stream), ret, fail);
 
       if (params->intraBatchSync && ((i+1) % comm->ceColl.intraBatchSyncFreq == 0) && ((i+1) < params->numOps)) {
-        NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+        NCCLCHECKGOTO(ncclMemOpSync(comm, stream, profilerArgs), ret, fail);
       }
     }
     // WORKAROUND: This is a workaround to ensure that there is always an even number of intra-batch synchronization operations.
     if (params->intraBatchSync && ((params->numOps + comm->ceColl.intraBatchSyncFreq - 1) / comm->ceColl.intraBatchSyncFreq) % 2 == 0) {
-      NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+      NCCLCHECKGOTO(ncclMemOpSync(comm, stream, profilerArgs), ret, fail);
     }
   }
   //--------------No graph capture / not legacy stream--------------
@@ -479,7 +481,7 @@ ncclResult_t ncclCeLaunchBatchOps(struct ncclComm* comm, struct ncclCeCollArgs* 
           stream), ret, fail);
 
         if (params->intraBatchSync && ((i+1) % comm->ceColl.intraBatchSyncFreq == 0) && ((i+1) < params->numOps)) {
-          NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+          NCCLCHECKGOTO(ncclMemOpSync(comm, stream, profilerArgs), ret, fail);
         }
       }
     }
@@ -510,7 +512,7 @@ ncclResult_t ncclCeAllGather(struct ncclComm* comm, struct ncclCeCollArgs* args,
   NCCLCHECKGOTO(ncclCeInitBatchOpsParams(&batchOpsParams, lsaSize), ret, fail);
 
   // Ensure all ranks are ready before starting transfers
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
   // Copy own data to receive buffer if operation is out-of-place
   if (myRecvBuff != mySendBuff) {
@@ -535,11 +537,11 @@ ncclResult_t ncclCeAllGather(struct ncclComm* comm, struct ncclCeCollArgs* args,
   batchOpsParams.intraBatchSync = (batchOpsParams.numOps > comm->ceColl.intraBatchSyncFreq && chunkBytes*batchOpsParams.numOps >= comm->ceColl.intraBatchSyncMsgThreshold);
 
   // Launch the batch operations
-  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &batchOpsParams, stream),
+  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &batchOpsParams, stream, args),
                 ret, fail);
 
   // Ensure all transfers are complete across all ranks
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
 exit:
   ncclCeFreeBatchOpsParams(&batchOpsParams);
@@ -563,7 +565,7 @@ ncclResult_t ncclCeAlltoAll(struct ncclComm* comm, struct ncclCeCollArgs* args, 
   NCCLCHECKGOTO(ncclCeInitBatchOpsParams(&batchOpsParams, lsaSize), ret, fail);
 
   // Ensure all ranks are ready before starting transfers
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
   // Copy data to other ranks: send data chunk for each destination rank
   for (int r = 0; r < lsaSize; r++) {
@@ -592,10 +594,10 @@ ncclResult_t ncclCeAlltoAll(struct ncclComm* comm, struct ncclCeCollArgs* args, 
   batchOpsParams.intraBatchSync = (batchOpsParams.numOps > comm->ceColl.intraBatchSyncFreq && chunkBytes*batchOpsParams.numOps >= comm->ceColl.intraBatchSyncMsgThreshold);
 
   // Launch the batch operations
-  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &batchOpsParams, stream), ret, fail);
+  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &batchOpsParams, stream, args), ret, fail);
 
   // Ensure all transfers are complete across all ranks
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
 exit:
   ncclCeFreeBatchOpsParams(&batchOpsParams);
@@ -621,7 +623,7 @@ ncclResult_t ncclCeScatter(struct ncclComm* comm, struct ncclCeCollArgs* args, c
   NCCLCHECKGOTO(ncclDevrWorldToLsaRank(comm, args->rootRank, &rootLsaRank), ret, fail);
 
   // Ensure all ranks are ready before starting transfers
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
   if (myLsaRank == rootLsaRank) {
     // Check if this is an in-place scatter operation
@@ -654,10 +656,10 @@ ncclResult_t ncclCeScatter(struct ncclComm* comm, struct ncclCeCollArgs* args, c
   // Non-root ranks don't need to perform any copy operations
 
   // Launch the batch operations
-  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &batchOpsParams, stream), ret, fail);
+  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &batchOpsParams, stream, args), ret, fail);
 
   // Ensure all transfers are complete across all ranks
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
 exit:
   ncclCeFreeBatchOpsParams(&batchOpsParams);
@@ -682,7 +684,7 @@ ncclResult_t ncclCeGather(struct ncclComm* comm, struct ncclCeCollArgs* args, cu
   NCCLCHECKGOTO(ncclDevrWorldToLsaRank(comm, args->rootRank, &rootLsaRank), ret, fail);
 
   // Ensure all ranks are ready before starting transfers
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
   if (myLsaRank == rootLsaRank) {
     // Root rank copies its own data to the correct position in receive buffer
@@ -705,10 +707,10 @@ ncclResult_t ncclCeGather(struct ncclComm* comm, struct ncclCeCollArgs* args, cu
   }
 
   // Launch the batch operations
-  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &batchOpsParams, stream), ret, fail);
+  NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &batchOpsParams, stream, args), ret, fail);
 
   // Ensure all transfers are complete across all ranks
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
 exit:
   ncclCeFreeBatchOpsParams(&batchOpsParams);
@@ -1080,7 +1082,7 @@ ncclResult_t ncclHierCeAllGather(struct ncclComm* comm, struct ncclKernelPlan* p
   // ====================================================================
   // Phase 3: Initial intra-node barrier
   // ====================================================================
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
   // ====================================================================
   // Phase 4: Self-broadcast (intra-node CE Broadcast of own chunk)
@@ -1109,7 +1111,7 @@ ncclResult_t ncclHierCeAllGather(struct ncclComm* comm, struct ncclKernelPlan* p
       ceBcastOps.numOps++;
     }
 
-    NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &ceBcastOps, stream), ret, fail);
+    NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &ceBcastOps, stream, args), ret, fail);
   }
 
   // ====================================================================
@@ -1144,7 +1146,7 @@ ncclResult_t ncclHierCeAllGather(struct ncclComm* comm, struct ncclKernelPlan* p
           ceScatterOps.numOps++;
         }
 
-        NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, args, &ceScatterOps, stream), ret, fail);
+        NCCLCHECKGOTO(ncclCeLaunchBatchOps(comm, &ceScatterOps, stream, args), ret, fail);
         ncclCeFreeBatchOpsParams(&ceScatterOps);
       }
     }
@@ -1161,7 +1163,7 @@ ncclResult_t ncclHierCeAllGather(struct ncclComm* comm, struct ncclKernelPlan* p
   // ====================================================================
   // Phase 7: Final intra-node barrier
   // ====================================================================
-  NCCLCHECKGOTO(ncclMemOpSync(comm, args, stream), ret, fail);
+  NCCLCHECKGOTO(ncclMemOpSync(comm, stream, args), ret, fail);
 
 exit:
   ncclCeFreeBatchOpsParams(&ceBcastOps);

@@ -1919,6 +1919,7 @@ static ncclResult_t envConfigOverride(ncclComm_t comm) {
   int nChannelsPerNetPeerEnv;
   int nvlinkUtilCentricSchedEnableEnv;
   int graphMixingSupportEnv;
+  int graphStreamOrderingEnv;
   int numRmaCtxEnv;
   int maxP2pPeersEnv;
   const char* checkModeEnv;
@@ -2014,6 +2015,17 @@ static ncclResult_t envConfigOverride(ncclComm_t comm) {
       if (comm->config.maxP2pPeers != NCCL_CONFIG_UNDEF_INT)
         INFO(NCCL_ENV, "Comm config maxP2pPeers reset to NCCL_MAX_P2P_PEERS=%d", maxP2pPeersEnv);
       comm->config.maxP2pPeers = maxP2pPeersEnv;
+    }
+  }
+
+  graphStreamOrderingEnv = ncclParamGraphStreamOrdering();
+  if (graphStreamOrderingEnv != NCCL_CONFIG_UNDEF_INT) {
+    if (graphStreamOrderingEnv != 0 && graphStreamOrderingEnv != 1)
+      INFO(NCCL_ENV, "NCCL_GRAPH_STREAM_ORDERING %d is not valid, leaving it set at %d", graphStreamOrderingEnv, comm->config.graphStreamOrdering);
+    else {
+      if (comm->config.graphStreamOrdering != NCCL_CONFIG_UNDEF_INT)
+        INFO(NCCL_ENV, "Comm config graphStreamOrdering reset to NCCL_GRAPH_STREAM_ORDERING=%d", graphStreamOrderingEnv);
+      comm->config.graphStreamOrdering = graphStreamOrderingEnv;
     }
   }
 
@@ -2194,6 +2206,10 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
     if (internalConfigPtr->version < NCCL_VERSION(2, 30, 0)) {
       internalConfigPtr->maxP2pPeers = defaultConfig.maxP2pPeers;
     }
+
+    if (internalConfigPtr->version < NCCL_VERSION(2, 30, 4)) {
+      internalConfigPtr->graphStreamOrdering = defaultConfig.graphStreamOrdering;
+    }
   }
 
   /* check input config attributes, -1 means user-undefined and we should use default value from NCCL. */
@@ -2281,6 +2297,12 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
     goto fail;
   }
 
+  if (internalConfigPtr->graphStreamOrdering != NCCL_CONFIG_UNDEF_INT && internalConfigPtr->graphStreamOrdering != 0 && internalConfigPtr->graphStreamOrdering != 1) {
+    WARN("Invalid config graphStreamOrdering attribute value %d", internalConfigPtr->graphStreamOrdering);
+    ret = ncclInvalidArgument;
+    goto fail;
+  }
+
   /* default config value can be tuned on different platform. */
   NCCL_CONFIG_DEFAULT(internalConfigPtr, blocking, NCCL_CONFIG_UNDEF_INT, 1, "Blocking", "%d");
   NCCL_CONFIG_DEFAULT(internalConfigPtr, cgaClusterSize, NCCL_CONFIG_UNDEF_INT, 4, "CGA cluster size", "%d");
@@ -2300,6 +2322,7 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
   NCCL_CONFIG_DEFAULT(internalConfigPtr, graphUsageMode, NCCL_CONFIG_UNDEF_INT, 2, "graphUsageMode", "%d");
   NCCL_CONFIG_DEFAULT(internalConfigPtr, numRmaCtx, NCCL_CONFIG_UNDEF_INT, 1, "numRmaCtx", "%d");
   NCCL_CONFIG_DEFAULT(internalConfigPtr, maxP2pPeers, NCCL_CONFIG_UNDEF_INT, NCCL_CONFIG_UNDEF_INT, "maxP2pPeers", "%d");
+  NCCL_CONFIG_DEFAULT(internalConfigPtr, graphStreamOrdering, NCCL_CONFIG_UNDEF_INT, NCCL_CONFIG_UNDEF_INT, "graphStreamOrdering", "%d");
 
   /* assign config to communicator */
   comm->config.blocking = internalConfigPtr->blocking;
@@ -2319,7 +2342,19 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
   comm->config.graphUsageMode = internalConfigPtr->graphUsageMode;
   comm->config.numRmaCtx = internalConfigPtr->numRmaCtx;
   comm->config.maxP2pPeers = internalConfigPtr->maxP2pPeers;
+  comm->config.graphStreamOrdering = internalConfigPtr->graphStreamOrdering;
   NCCLCHECKGOTO(envConfigOverride(comm), ret, fail);
+
+  // Resolve to system default (serialize) if neither user config nor env var set it.
+  if (comm->config.graphStreamOrdering == NCCL_CONFIG_UNDEF_INT)
+    comm->config.graphStreamOrdering = 1;
+
+  // Warn and fall back when graphStreamOrdering=0 is combined with graphUsageMode=2 (unsupported).
+  if (comm->config.graphStreamOrdering == 0 && comm->config.graphUsageMode == 2) {
+    WARN("graphStreamOrdering=0 with graphUsageMode=2 (graph mixing) is not supported; "
+         "falling back to graphStreamOrdering=1 for this communicator");
+    comm->config.graphStreamOrdering = 1;
+  }
 
 exit:
   return ret;

@@ -278,7 +278,32 @@ ncclConfig_t
 
  .. c:macro:: graphUsageMode
 
-  Set the graph usage mode for the communicator. It support three possible values: 0 (no graphs), 1 (one graph) and 2 (either multiple graphs or mix of graph and non-graph). The default value is 2.
+  Set the graph usage mode for the communicator. It support three possible values: 0 (no graphs), 1 (one graph) and 2 (either multiple graphs or mix of graph and non-graph). The default value is 2. If :ref:`NCCL_GRAPH_STREAM_ORDERING` or :c:macro:`graphStreamOrdering` disables capture-time stream ordering (``0``), **graph mixing must be off**—use ``graphUsageMode`` ``0`` or ``1`` only; ``graphUsageMode=2`` must not be combined with ordering ``0`` (see :ref:`NCCL_GRAPH_STREAM_ORDERING`).
+
+ .. c:macro:: graphStreamOrdering
+
+  (since 2.30)
+
+  Per-communicator override of :ref:`NCCL_GRAPH_STREAM_ORDERING`. ``1`` keeps
+  NCCL's default capture-time serialization of communication kernels. ``0``
+  disables it for this communicator—kernels are placed on the capture stream
+  and the application must guarantee correct ordering (see
+  :ref:`NCCL_GRAPH_STREAM_ORDERING`).
+
+  Defaults to ``NCCL_CONFIG_UNDEF_INT`` (inherits
+  :ref:`NCCL_GRAPH_STREAM_ORDERING`). ``0`` or ``1`` overrides the env var
+  for this communicator.
+
+  ``graphStreamOrdering=0`` requires ``graphUsageMode`` ``0`` or ``1``
+  (mixing **off**). Combining it with ``graphUsageMode=2`` is **not
+  supported**; see :ref:`NCCL_GRAPH_STREAM_ORDERING`.
+
+  **Mixed values on one GPU:** A communicator set to ``1`` still receives
+  NCCL's internal serialization for its own kernels, but NCCL does **not**
+  insert cross-communicator ordering with a peer set to ``0``—its kernels may
+  overlap in situations NCCL would have serialized. Use ``0`` only when the
+  application guarantees ordering of **all** NCCL communication kernels that
+  may run concurrently on the GPU.
 
  .. c:macro:: maxP2pPeers
 

@@ -35,3 +35,10 @@ The following sample code shows how to capture computational kernels and NCCL op
 Starting with NCCL 2.11, when NCCL communication is captured and the CollNet algorithm is used, NCCL allows for further performance improvement via user buffer registration. For details, please see the environment variable :ref:`NCCL_GRAPH_REGISTER`.
 
 Mixing graph-captured and non-graph-captured NCCL operations is supported by NCCL. However, when graphs involving multiple communicators are ``cudaGraphLaunch``'d from the same thread, the internal mechanism NCCL uses to support this mixing can contribute to the deadlocks described above. To disable this mechanism, see the environment variable :ref:`NCCL_GRAPH_MIXING_SUPPORT`.
+
+Disabling NCCL's capture-time serialization of communication kernels (see
+:ref:`NCCL_GRAPH_STREAM_ORDERING` and :c:macro:`graphStreamOrdering` in
+:ref:`ncclconfig`) together with graph mixing (communicator ``graphUsageMode=2``)
+is **not supported**. If ordering is disabled for a communicator, **graph mixing
+must be off** (``graphUsageMode`` ``0`` or ``1``); workloads that need mixing must
+keep the default ordering (``1``).

@@ -1473,6 +1473,73 @@ Value accepted
 ^^^^^^^^^^^^^^
 0 or 1. Default is 1 (enabled).
 
+.. _NCCL_GRAPH_STREAM_ORDERING:
+
+NCCL_GRAPH_STREAM_ORDERING
+--------------------------
+(since 2.30)
+
+Allow applications to disable NCCL's internal serialization of communication
+kernels during CUDA graph capture, as a performance optimization for capture-heavy
+workloads (for example, frameworks that re-capture graphs frequently or that wrap
+each collective in its own CUDA subgraph). This setting has no effect outside of
+CUDA graph capture.
+
+.. warning::
+
+   ``NCCL_GRAPH_STREAM_ORDERING=0`` together with **graph mixing** (communicator
+   ``graphUsageMode=2``; see :ref:`ncclconfig`) is **not supported**. If stream
+   ordering is disabled for a communicator, **graph mixing must be off**—use
+   ``graphUsageMode`` ``0`` or ``1`` (and note that :ref:`NCCL_GRAPH_MIXING_SUPPORT`
+   ``1`` forces ``graphUsageMode=2`` at init, overriding an explicit lower mode).
+   Workloads that require mixing must keep the default ``1``. The same rule applies
+   to per-communicator :c:macro:`graphStreamOrdering` ``0``.
+
+When set to 1 (default), NCCL guarantees that communication kernels are executed
+in a serialized and deterministic order across graphs and communicators that share
+a GPU, with no ordering responsibility placed on the application.
+
+When set to 0, NCCL's internal serialization guarantee is disabled and
+communication kernels are placed on the stream used to begin the graph capture.
+The application is responsible for ensuring correct ordering of communication
+kernels.
+
+The same bypass can be selected per communicator with the
+:c:macro:`graphStreamOrdering` field in :ref:`ncclconfig`. When that
+field is ``0`` or ``1``, it overrides ``NCCL_GRAPH_STREAM_ORDERING`` for that
+communicator. Communicators on the same GPU may still set this option
+differently; NCCL does not order them with respect to each other in that case,
+so the application's obligations below apply whenever the bypass is in effect
+for a communicator—see :c:macro:`graphStreamOrdering` for details.
+
+.. admonition:: Application responsibilities
+
+   With ``NCCL_GRAPH_STREAM_ORDERING=0`` (or
+   :c:macro:`graphStreamOrdering` ``0``), NCCL stops enforcing
+   device-side serialization of communication kernels on the graph-capture
+   path. The application must then guarantee:
+
+   1. **Serialization on the GPU.** NCCL operations must not overlap: at
+      most one NCCL operation may execute on a given GPU at a time.
+
+   2. **Scope.** The rule applies across communicators, across different
+      captured graphs, and between captured and uncaptured NCCL work. The
+      ordering must hold at replay / execution, not only as expressed at
+      capture time.
+
+   3. **How to satisfy it.** The simplest approach is to enqueue **all**
+      NCCL operations on the **same CUDA stream**. Equivalent serialization
+      can be achieved with device-wide synchronization and/or CUDA event
+      dependencies between streams.
+
+   Network (proxy) transports are unaffected by this setting; NCCL continues
+   to provide its normal host-side ordering guarantees for those transports
+   regardless of the value of ``NCCL_GRAPH_STREAM_ORDERING``.
+
+Value accepted
+^^^^^^^^^^^^^^
+0 or 1. Default is 1 (enabled).
+
 NCCL_DMABUF_ENABLE
 ------------------
 (since 2.13)

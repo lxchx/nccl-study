@@ -19,6 +19,7 @@
 #else
 #include "gin.h"
 #endif
+#include "rma.h"
 #include "enqueue.h"
 #include "graph.h"
 #include "graph/topo.h"
@@ -470,11 +471,13 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
     comm->sharedRes = sharedRes;
     sharedRes->refCount = 1;
     NCCLCHECK(ncclNetInit(comm));
+    NCCLCHECK(ncclRmaInit(comm));
     NCCLCHECK(ncclGinInit(comm));
   } else {
     comm->sharedRes = parent->sharedRes;
     ncclAtomicRefCountIncrement(&parent->sharedRes->refCount);
     NCCLCHECK(ncclNetInitFromParent(comm, parent));
+    NCCLCHECK(ncclRmaInitFromParent(comm, parent));
     NCCLCHECK(ncclGinInitFromParent(comm, parent));
   }
 
@@ -754,7 +757,7 @@ static ncclResult_t fillInfo(struct ncclComm* comm, struct ncclPeerInfo* info, u
   CUCHECK(cuDeviceGetAttribute(&cuMemGdrSupport, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED, comm->cudaDev));
   info->cuMemGdrSupport = (cuMemGdrSupport == 1);
   info->supportedGinType = comm->sharedRes->ginState.ginType;
-  info->rmaPluginAvailable = (comm->rmaState.rmaProxyState.ncclGin != nullptr);
+  info->rmaPluginAvailable = (comm->rmaState.rmaProxyState.ncclRma != nullptr);
 
   return ncclSuccess;
 }

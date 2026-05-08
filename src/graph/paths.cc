@@ -162,6 +162,9 @@ ncclResult_t ncclTopoPrintPaths(struct ncclTopoSystem* system) {
   for (int i=0; i<system->nodes[GIN].count; i++) {
     printNodePaths(system, system->nodes[GIN].nodes+i);
   }
+  for (int i=0; i<system->nodes[RMA].count; i++) {
+    printNodePaths(system, system->nodes[RMA].nodes+i);
+  }
   return ncclSuccess;
 }
 
@@ -711,6 +714,11 @@ ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm
   // Set direct paths to GIN devices.
   for (int n=0; n<system->nodes[GIN].count; n++) {
     NCCLCHECK(ncclTopoSetPaths(system->nodes[GIN].nodes+n, system));
+  }
+
+  // Set direct paths to RMA devices.
+  for (int n=0; n<system->nodes[RMA].count; n++) {
+    NCCLCHECK(ncclTopoSetPaths(system->nodes[RMA].nodes+n, system));
   }
 
   // Set direct paths to NVSwitches.

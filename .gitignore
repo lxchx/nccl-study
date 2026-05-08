@@ -13,6 +13,7 @@ junits/
 /coverage/
 tags
 *.swp
+.cache/
 
 # Example build artifacts
 *.o

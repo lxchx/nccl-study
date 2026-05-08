@@ -37,7 +37,7 @@
 // to GPU traffic consumes more PCI bandwidth.
 #define INTEL_P2P_OVERHEAD(bw) (bw*6/5)
 
-#define NCCL_TOPO_NODE_TYPES 8
+#define NCCL_TOPO_NODE_TYPES 9
 #define GPU 0
 #define PCI 1
 #define NVS 2
@@ -45,7 +45,8 @@
 #define NIC 4
 #define NET 5
 #define GIN 6
-#define DEV 7
+#define RMA 7
+#define DEV 8
 extern const char* topoNodeTypeStr[];
 
 // We want link types and path types to match as much as possible
@@ -170,6 +171,7 @@ enum { NCCL_NET_MERGE_POLICY_ALL = 0, NCCL_NET_MERGE_POLICY_RAIL = 1 };
 struct ncclTopoNetInfo {
   bool coll;
   bool gin;
+  bool rma;
   bool net;
   // communicator-specific information
   int netPluginIndex;

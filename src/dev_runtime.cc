@@ -523,7 +523,7 @@ fail:
 
 static ncclResult_t symMemoryRegisterRma(struct ncclComm* comm, struct ncclDevrMemory* mem) {
   NCCLCHECK(ncclRmaProxyConnectOnce(comm));
-  NCCLCHECK(ncclRmaProxyRegister(comm, mem->primaryAddr, mem->size, mem->rmaHostWins, mem->rmaDevWins));
+  NCCLCHECK(ncclRmaProxyRegister(comm, mem->primaryAddr, mem->size, mem->rmaHostWins));
   return ncclSuccess;
 }
 
@@ -1436,8 +1436,8 @@ ncclResult_t ncclCommQueryProperties(ncclComm_t comm, ncclCommProperties_t* prop
 
   if (props->version > NCCL_VERSION(2, 29, 3)) {
     props->hostRmaSupport = comm->hostRmaSupport;
-    NCCLCHECK(getGlobalGinType(comm, &props->ginType));
-    NCCLCHECK(getGlobalRailedGinType(comm, &props->railedGinType));
+    NCCLCHECK(ncclGetGinType(comm, &props->ginType));
+    NCCLCHECK(ncclGetRailedGinType(comm, &props->railedGinType));
 
     // Preferring to call ncclDevrInitOnce directly instead to calling ncclTeam* functions because
     // we can propagate the result of ncclDevrInitOnce back to the caller.
@@ -1606,14 +1606,14 @@ ncclResult_t ncclDevrGetLsaRankPtr(struct ncclComm* comm, struct ncclDevrWindow*
 }
 
 // Get the RMA device window handle for a specific context
-ncclGinWindow_t ncclDevrGetRmaDevWin(struct ncclDevrWindow* winHost, int ctx) {
+void* ncclDevrGetRmaWin(struct ncclDevrWindow* winHost, int ctx) {
   if (winHost == nullptr || winHost->memory == nullptr) {
     return nullptr;
   }
   if (ctx < 0 || ctx >= NCCL_GIN_MAX_CONNECTIONS) {
     return nullptr;
   }
-  return winHost->memory->rmaDevWins[ctx];
+  return winHost->memory->rmaHostWins[ctx];
 }
 
 // Get the multicast address for a given team

@@ -17,6 +17,7 @@
 #else
 #include "gin.h"
 #endif
+#include "rma.h"
 #include "transport.h"
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -28,7 +29,7 @@
 #define BUSID_SIZE (sizeof("0000:00:00.0"))
 #define BUSID_REDUCED_SIZE (sizeof("0000:00"))
 
-const char* topoNodeTypeStr[] = { "GPU", "PCI", "NVS", "CPU", "NIC", "NET", "GIN", "DEV" };
+const char* topoNodeTypeStr[] = { "GPU", "PCI", "NVS", "CPU", "NIC", "NET", "GIN", "RMA", "DEV" };
 const char* topoLinkTypeStr[] = { "LOC", "NVL", "",    "C2C", "PCI",    "",    "",    "",    "", "SYS", "NET" };
 const char* topoPathTypeStr[] = { "LOC", "NVL", "NVB", "C2C", "PIX", "PXB", "P2C", "PXN", "PHB", "SYS", "NET", "DIS" };
 
@@ -444,6 +445,25 @@ ncclResult_t ncclTopoAddGin(struct ncclXmlNode* xmlNet, struct ncclTopoSystem* s
   return ncclSuccess;
 }
 
+ncclResult_t ncclTopoAddRma(struct ncclXmlNode* xmlNet, struct ncclTopoSystem* system, struct ncclTopoNode* nic, int systemId) {
+  int dev;
+  NCCLCHECK(xmlGetAttrInt(xmlNet, "dev", &dev));
+
+  int64_t netId = NCCL_TOPO_ID(systemId, dev);
+  struct ncclTopoNode* net;
+  NCCLCHECK(ncclTopoCreateNode(system, &net, RMA, netId));
+  net->net.dev = dev;
+
+  int mbps;
+  NCCLCHECKNOWARN(xmlGetAttrIntDefault(xmlNet, "speed", &mbps, 0), NCCL_GRAPH);
+  if (mbps <= 0) mbps = 10000; // Some NICs define speed = -1
+  net->net.bw = mbps / 8000.0;
+
+  NCCLCHECK(ncclTopoConnectNodes(nic, net, LINK_NET, net->net.bw));
+  NCCLCHECK(ncclTopoConnectNodes(net, nic, LINK_NET, net->net.bw));
+  return ncclSuccess;
+}
+
 
 ncclResult_t ncclTopoAddNic(struct ncclXmlNode* xmlNic, struct ncclTopoSystem* system, struct ncclTopoNode* nic, int systemId) {
   for (int s=0; s<xmlNic->nSubs; s++) {
@@ -455,11 +475,13 @@ ncclResult_t ncclTopoAddNic(struct ncclXmlNode* xmlNic, struct ncclTopoSystem* s
     if (index == -1) continue;
 
     // Backward compatibility: net withouh "net" attr is a net dev, net without a "gin" is not a gin dev
-    int net = 0, gin = 0;
+    int net = 0, gin = 0, rma = 0;
     NCCLCHECK(xmlGetAttrIntDefault(xmlNet, "net", &net, 1));
     NCCLCHECK(xmlGetAttrIntDefault(xmlNet, "gin", &gin, 0));
+    NCCLCHECK(xmlGetAttrIntDefault(xmlNet, "rma", &rma, 0));
     if (net) NCCLCHECK(ncclTopoAddNet(xmlNet, system, nic, systemId));
     if (gin) NCCLCHECK(ncclTopoAddGin(xmlNet, system, nic, systemId));
+    if (rma) NCCLCHECK(ncclTopoAddRma(xmlNet, system, nic, systemId));
   }
   return ncclSuccess;
 }
@@ -1465,13 +1487,15 @@ static ncclResult_t ncclTopoPopulateNics(ncclXml* xml, int startIndex, int endIn
     // Only set coll or gin if it's not 0
     if (netInfo->coll) NCCLCHECK(xmlInitAttrInt(netNode, "coll", netInfo->coll));
     if (netInfo->gin) NCCLCHECK(xmlInitAttrInt(netNode, "gin", netInfo->gin));
+    if (netInfo->rma) NCCLCHECK(xmlInitAttrInt(netNode, "rma", netInfo->rma));
 
-    const char *keepAttr, *ginAttr;
+    const char *keepAttr, *ginAttr, *rmaAttr;
     NCCLCHECK(xmlGetAttr(netNode, "net", &netAttr));
     NCCLCHECK(xmlGetAttr(netNode, "gin", &ginAttr));
+    NCCLCHECK(xmlGetAttr(netNode, "rma", &rmaAttr));
     NCCLCHECK(xmlGetAttr(netNode, "coll", &colAttr));
     NCCLCHECK(xmlGetAttr(netNode, "keep", &keepAttr));
-    INFO(NCCL_GRAPH, "ncclTopoPopulateNics : Filled %s in topo with pciPath=%s net=%s gin=%s keep=%s coll=%s rail=%d plane=%d", props.name, props.pciPath, netAttr, ginAttr, keepAttr, colAttr, props.railId, props.planeId);
+    INFO(NCCL_GRAPH, "ncclTopoPopulateNics : Filled %s in topo with pciPath=%s net=%s gin=%s rma=%s keep=%s coll=%s rail=%d plane=%d", props.name, props.pciPath, netAttr, ginAttr, rmaAttr, keepAttr, colAttr, props.railId, props.planeId);
   }
 
   return ncclSuccess;
@@ -1620,6 +1644,21 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
         netInfo.getProperties = gin->getProperties;
         netInfo.makeVDevice = NULL;
         netInfo.devices = gin->devices;
+        NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
+      }
+      ncclRma_t* rma = comm->rmaState.rmaProxyState.ncclRma;
+      if (rma) {
+        netInfo.net = 0;
+        netInfo.coll = 0;
+        netInfo.gin = 0;
+        netInfo.rma = 1;
+        netInfo.netPluginIndex = comm->rmaPluginIndex;
+        netInfo.dmaBufSupport = comm->dmaBufSupport;
+        netInfo.getDevCount = ncclRmaGetDevCount;
+        netInfo.name = rma->name;
+        netInfo.getProperties = rma->getProperties;
+        netInfo.makeVDevice = NULL;
+        netInfo.devices = rma->devices;
         NCCLCHECKGOTO(ncclTopoProcessNet(xml, dumpXmlFile, &netInfo), ret, fail);
       }
       if (collNetSupport(comm)) {
@@ -1857,6 +1896,21 @@ ncclResult_t ncclTopoGetLocalGinDevs(struct ncclComm* comm, int* localGinDevs, i
     NCCLCHECK(ncclTopoGetLocalGinDev(comm->topo, comm->rank, c, NULL, localGinDevs+c));
     if (c > 0 && localGinDevs[c] == localGinDevs[0]) {
       *localGinCount = c;
+      break;
+    }
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoGetLocalRmaDev(struct ncclTopoSystem* system, int rank, int channelId, int64_t* id, int* dev) {
+  return ncclTopoGetLocalNetType(system, RMA, rank, channelId, id, dev);
+}
+
+ncclResult_t ncclTopoGetLocalRmaDevs(struct ncclComm* comm, int* localRmaDevs, int* localRmaCount) {
+  for (int c=0; c<NCCL_TOPO_MAX_NODES; c++) {
+    NCCLCHECK(ncclTopoGetLocalRmaDev(comm->topo, comm->rank, c, NULL, localRmaDevs+c));
+    if (c > 0 && localRmaDevs[c] == localRmaDevs[0]) {
+      *localRmaCount = c;
       break;
     }
   }

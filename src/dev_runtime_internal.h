@@ -35,7 +35,6 @@ struct ncclDevrMemory {
   void* ginHostWins[NCCL_GIN_MAX_CONNECTIONS];
   ncclGinWindow_t ginDevWins[NCCL_GIN_MAX_CONNECTIONS];
   void* rmaHostWins[NCCL_GIN_MAX_CONNECTIONS];
-  ncclGinWindow_t rmaDevWins[NCCL_GIN_MAX_CONNECTIONS];
   int winFlags;
   // Per-rank info derived from this rank's own allocation.
   int numSegments;         // number of physical segments backing this rank's buffer

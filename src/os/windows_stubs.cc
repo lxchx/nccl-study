@@ -14,6 +14,7 @@
 #include "env.h"
 #include "tuner.h"
 #include "gin/gin_host_win_stub.h"
+#include "rma.h"
 #include "device.h"
 
 #include <cstring>
@@ -139,13 +140,8 @@ ncclResult_t ncclCollNetSetVirtDevCount(int netPluginIndex, int nVirtDev) {
 }
 
 /* --------------------------------------------------------------------------
- * GIN additional stubs (getGlobalGinType, ConnectOnce, Register, etc.)
+ * GIN additional stubs (GetGinType, ConnectOnce, Register, etc.)
  * -------------------------------------------------------------------------- */
-ncclResult_t getGlobalGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
-  (void)comm;
-  *ginType = (ncclGinType_t)0;  /* NCCL_GIN_TYPE_NONE */
-  return ncclSuccess;
-}
 
 /* GIN requirement/create stubs (implemented in gin_barrier.cc and gin_scratch.cc on Linux only) */
 ncclResult_t ncclGinBarrierCreateRequirement(ncclComm_t comm, ncclTeam_t team, int nBarriers,
@@ -177,7 +173,13 @@ ncclResult_t ncclGinInboxA2ACreateRequirement(ncclTeam peers, int nBlocks, int s
   return ncclSuccess;
 }
 
-ncclResult_t getGlobalRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
+ncclResult_t ncclGetGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
+  (void)comm;
+  *ginType = (ncclGinType_t)0;  /* NCCL_GIN_TYPE_NONE */
+  return ncclSuccess;
+}
+
+ncclResult_t ncclGetRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
   (void)comm;
   *ginType = (ncclGinType_t)0;  /* NCCL_GIN_TYPE_NONE */
   return ncclSuccess;
@@ -528,5 +530,29 @@ ncclResult_t ncclGinFinalize(struct ncclComm* comm) {
   (void)comm;
   return ncclSuccess;
 }
+
+/* --------------------------------------------------------------------------
+ * RMA stubs
+ * -------------------------------------------------------------------------- */
+ncclResult_t ncclRmaInit(struct ncclComm* comm) {
+  (void)comm;
+  return ncclSuccess;
+}
+ncclResult_t ncclRmaInitFromParent(struct ncclComm* comm, struct ncclComm* parent) {
+  (void)comm;
+  (void)parent;
+  return ncclSuccess;
+}
+ncclResult_t ncclRmaGetDevCount(int rmaPluginIndex, int* nPhysDev, int* nVirtDev) {
+  (void)rmaPluginIndex;
+  if (nPhysDev) *nPhysDev = 0;
+  if (nVirtDev) *nVirtDev = -1;
+  return ncclSuccess;
+}
+ncclResult_t ncclRmaFinalize(struct ncclComm* comm) {
+  (void)comm;
+  return ncclSuccess;
+}
+
 
 #endif /* NCCL_OS_WINDOWS */

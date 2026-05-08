@@ -11,11 +11,7 @@
 #include "nccl.h"
 #include "nccl_net.h"
 #include "nccl_common.h"
-#if defined(NCCL_OS_WINDOWS)
-#include "gin/gin_host_win_stub.h"
-#else
-#include "gin/gin_host.h"
-#endif
+#include "nccl_rma.h"
 #include "alloc.h"
 #include <thread>
 #include <mutex>
@@ -109,9 +105,9 @@ struct ncclRmaProxyCtx {
   struct ncclComm *comm;
 
   // GIN context for the RMA proxy context
-  void *ginCollComm;
-  void *ginCtx;
-  ncclNetDeviceHandle_t *devHandle;
+  void *rmaCollComm;
+  void *rmaCtx;
+  //ncclNetDeviceHandle_t *devHandle;
   ncclNetProperties_t props;
 
   //---------Non-graph descriptor queues and synchronization---------
@@ -143,7 +139,6 @@ struct ncclRmaProxyCtx {
   // Total signal buffer size: (nRanks + 1) * 8 bytes
   CUmemGenericAllocationHandle signalsCumemhandle;
   void *signalsMhandle;
-  void *signalsGinHandle;
   uint64_t *signalsDev;
   uint64_t* signalsHost; // Host buffer to track the expected values of the signals
 
@@ -155,7 +150,6 @@ struct ncclRmaProxyCtx {
   // CPU-accessible signal is required as proxy needs to poll on the signal values
   void *cpuAccessSignalsGdrHandle;
   void *cpuAccessSignalsMhandle;
-  void *cpuAccessSignalsGinHandle;
   uint64_t *cpuAccessSignals;
   uint64_t *cpuAccessSignalsDev;
   uint64_t* cpuAccessSignalsHost; // Host buffer to track the expected values of the signals
@@ -163,29 +157,26 @@ struct ncclRmaProxyCtx {
   // Local flush buffer
   CUmemGenericAllocationHandle flushBufCumemhandle;
   void *flushBufMhandle;
-  void *flushBufGinHandle;
   uint64_t *flushBufDev;
 };
 
 struct ncclRmaProxyState {
   struct ncclComm *comm;
-  ncclGin_t* ncclGin;
-  void* ginInstance;
+  ncclRma_t* ncclRma;
+  int rmaVersion;
+  void* rmaInstance;
   bool connected;
-  int ginType;
+  int rmaType;
 
   // Physical GIN communicator contexts
-  int ginCommCount;
-  void* ginComms[NCCL_GIN_MAX_CONNECTIONS];
+  int rmaCommCount;
+  void* rmaComms[NCCL_GIN_MAX_CONNECTIONS];
   ncclNetProperties_t props[NCCL_GIN_MAX_CONNECTIONS];
 
   // Virtual RMA proxy contexts
   int rmaProxyCtxCount;
   void** rmaProxyCtxs;
-  ncclNetDeviceHandle_t** rmaProxyDevHandles;
-
-  int needsProxyProgress;  // Whether we need to progress GIN operations with the proxy
-  int ginProgress;         // GIN progress is enabled
+  int rmaProgress;         // RMA progress is enabled
   std::thread thread;
   std::mutex mutex;
   std::condition_variable cond;
@@ -204,14 +195,13 @@ ncclResult_t ncclRmaProxyFinalize(struct ncclComm* comm);
 // RMA Proxy context management
 ncclResult_t ncclRmaProxyCreateContext(struct ncclComm *comm, void *collComm, ncclNetProperties_t props,
                                        void **outRmaProxyCtx, ncclNetDeviceHandle_t **outDevHandle);
-ncclResult_t ncclRmaProxyDestroyContext(ncclGin_t* ginComm, void* rmaProxyCtx);
-ncclResult_t ncclRmaProxyProgress(ncclGin_t* ncclGin, void* rmaProxyCtx);
+ncclResult_t ncclRmaProxyDestroyContext(ncclRma_t* rmaComm, void* rmaProxyCtx);
+ncclResult_t ncclRmaProxyProgress(ncclRma_t* ncclRma, void* rmaProxyCtx);
 void* ncclRmaProxyProgressThread(struct ncclRmaProxyState* rmaProxyState_);
 
 // RMA Proxy memory registration
 ncclResult_t ncclRmaProxyRegister(struct ncclComm* comm, void* address, size_t size,
-                                  void* rmaHostWins[NCCL_GIN_MAX_CONNECTIONS],
-                                  ncclGinWindow_t rmaDevWins[NCCL_GIN_MAX_CONNECTIONS]);
+                                  void* rmaHostWins[NCCL_GIN_MAX_CONNECTIONS]);
 ncclResult_t ncclRmaProxyDeregister(struct ncclComm* comm, void* rmaHostWins[NCCL_GIN_MAX_CONNECTIONS]);
 
 // Circular buffer helpers

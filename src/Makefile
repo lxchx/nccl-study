@@ -30,6 +30,7 @@ LIBSRCFILES := \
 	$(wildcard plugin/*.cc) \
 	$(wildcard plugin/net/*.cc) \
 	$(wildcard plugin/gin/*.cc) \
+	$(wildcard plugin/rma/*.cc) \
 	$(wildcard plugin/tuner/*.cc) \
 	$(wildcard plugin/profiler/*.cc) \
 	$(wildcard plugin/env/*.cc) \

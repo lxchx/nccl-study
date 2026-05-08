@@ -18,68 +18,20 @@
 
 NCCL_PARAM(GinEnable, "GIN_ENABLE", 1);
 
-ncclResult_t getGlobalGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
-  if (comm == nullptr || ginType == nullptr) {
-    return ncclInternalError;
-  }
+ncclResult_t ncclGetGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
+  if (comm == nullptr || ginType == nullptr) return ncclInternalError;
 
-  if (comm->globalGinSupport != NCCL_GIN_CONNECTION_FULL) {
-    *ginType = NCCL_GIN_TYPE_NONE;
-    return ncclSuccess;
-  }
-
-  *ginType = comm->sharedRes->ginState.ginType;
+  *ginType = comm->globalGinSupport != NCCL_GIN_CONNECTION_FULL ? NCCL_GIN_TYPE_NONE :
+    comm->sharedRes->ginState.ginType;
   return ncclSuccess;
 }
 
-ncclResult_t getGlobalRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
-  if (comm == nullptr || ginType == nullptr) {
-    return ncclInternalError;
-  }
+ncclResult_t ncclGetRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType) {
+  if (comm == nullptr || ginType == nullptr) return ncclInternalError;
 
-  if (comm->globalGinSupport == NCCL_GIN_CONNECTION_NONE) {
-    *ginType = NCCL_GIN_TYPE_NONE;
-    return ncclSuccess;
-  }
-  *ginType = comm->sharedRes->ginState.ginType;
+  *ginType = comm->globalGinSupport == NCCL_GIN_CONNECTION_NONE ? NCCL_GIN_TYPE_NONE :
+    comm->sharedRes->ginState.ginType;
   return ncclSuccess;
-}
-
-ncclResult_t setLocalGinType(struct ncclComm* comm) {
-  if (comm == nullptr || comm->sharedRes->ginState.ncclGin == nullptr) {
-    return ncclInternalError;
-  }
-  ncclGinState& ginState = comm->sharedRes->ginState;
-  ginState.ginType = NCCL_GIN_TYPE_NONE;
-
-  if (!ncclParamGinEnable()) {
-    return ncclSuccess;
-  }
-
-  if (comm->compCap < 70) {
-    /* GIN only supported for Volta and later */
-    INFO(NCCL_INIT, "Compute Capability (%d) is not sufficient to enable GIN.  Require Volta (70) or newer.",comm->compCap);
-    return ncclSuccess;
-  }
-
-  ncclNetProperties_t props;
-  NCCLCHECK(ginState.ncclGin->getProperties(0, &props));
-  if (props.netDeviceType == NCCL_NET_DEVICE_GIN_PROXY ||
-      props.netDeviceType == NCCL_NET_DEVICE_GIN_GDAKI ||
-      props.netDeviceType == NCCL_NET_DEVICE_GIN_GPI) {
-    // NOTE: The following cast is valid because ncclGinType_t variant values
-    // should match NCCL_NET_DEVICE_GIN_* values from `enum ncclNetDeviceType`.
-    ginState.ginType = static_cast<ncclGinType_t>(props.netDeviceType);
-
-    if (ginState.ginType == NCCL_GIN_TYPE_PROXY) {
-      // Replace ginState->ncclGin by a layer adding host queues
-      NCCLCHECK(ncclGinProxyInit(&ginState.ncclGin));
-    }
-    return ncclSuccess;
-  }
-  
-  WARN("Cannot get gin type: ncclGin is not null but net device type (%d) is not a gin type", props.netDeviceType);
-  return ncclInternalError;
 }
 
 void* ncclGinProgress(struct ncclGinState* ginState_) {

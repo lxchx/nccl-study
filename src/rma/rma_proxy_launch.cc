@@ -34,9 +34,9 @@ ncclResult_t ncclRmaProxyPutBuildOp(
     struct ncclRmaPutSignalOp* op)
 {
   op->srcOff = srcOff;
-  op->srcHandle = ncclDevrGetRmaDevWin(srcWin, ctx);
+  op->srcHandle = ncclDevrGetRmaWin(srcWin, ctx);
   op->dstOff = peerOff;
-  op->dstHandle = ncclDevrGetRmaDevWin(peerWin, ctx);
+  op->dstHandle = ncclDevrGetRmaWin(peerWin, ctx);
   op->size = size;
   op->targetRank = peer;
   op->request = nullptr;
@@ -768,14 +768,14 @@ static ncclResult_t ncclRmaProxyReclaimPersistDescs(struct ncclRmaProxyState* pr
 // Pauses the proxy thread, frees descs on the main thread, then resumes the proxy.
 ncclResult_t ncclRmaProxyReclaimPlan(struct ncclComm* comm, struct ncclKernelPlan* plan) {
   struct ncclRmaProxyState* proxyState = &comm->rmaState.rmaProxyState;
-  if (!proxyState->connected || !proxyState->needsProxyProgress) return ncclSuccess;
+  if (!proxyState->connected) return ncclSuccess;
 
   // Step 1: Request proxy to pause and wait for acknowledgment
   {
     std::unique_lock<std::mutex> lock(proxyState->mutex);
-    proxyState->ginProgress = 2;
+    proxyState->rmaProgress = 2;
     proxyState->cond.notify_one();
-    proxyState->cond.wait(lock, [&]{ return proxyState->ginProgress == 0; });
+    proxyState->cond.wait(lock, [&]{ return proxyState->rmaProgress == 0; });
   }
 
   // Step 2: Free persistent descs on main thread
@@ -784,7 +784,7 @@ ncclResult_t ncclRmaProxyReclaimPlan(struct ncclComm* comm, struct ncclKernelPla
   // Step 3: Resume proxy
   {
     std::lock_guard<std::mutex> lock(proxyState->mutex);
-    proxyState->ginProgress = 1;
+    proxyState->rmaProgress = 1;
     proxyState->cond.notify_one();
   }
 

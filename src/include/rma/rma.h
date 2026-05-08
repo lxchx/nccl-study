@@ -13,6 +13,8 @@
 #include "rma/rma_ce.h"
 #include "rma/rma_proxy.h"
 
+#define NCCL_RMA_MAX_CONNECTIONS 4
+
 struct ncclRmaArgs{
   int ctx;
   ncclFunc_t func;

@@ -1,0 +1,68 @@
+/*************************************************************************
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * See LICENSE.txt for more license information
+ *************************************************************************/
+
+#include "nccl_rma.h"
+#include "checks.h"
+#include "os.h"
+#include <string.h>
+
+static ncclRma_v13_t* ncclRma_v13;
+static ncclRma_t ncclRma;
+
+static ncclResult_t ncclRma_createContext(void* collComm, ncclRmaConfig_v14_t* config, void** rmaCtx) {
+  ncclNetDeviceHandle_v11_t* devHandle;
+  ncclGinConfig_v13_t config_v13;
+  memset(&config_v13, 0, sizeof(config_v13));
+  config_v13.nContexts = config->nContexts;
+  config_v13.trafficClass = config->trafficClass;
+  NCCLCHECK(ncclRma_v13->createContext(collComm, &config_v13, rmaCtx, &devHandle));
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclRma_regMrSym(void* collComm, void* data, size_t size, int type, uint64_t mrFlags, void** mhandle) {
+  void* unusedGinHandle;
+  NCCLCHECK(ncclRma_v13->regMrSym(collComm, data, size, type, mrFlags, mhandle, &unusedGinHandle));
+  return ncclSuccess;
+}
+
+static ncclResult_t ncclRma_regMrSymDmaBuf(void* collComm, void* data, size_t size, int type, uint64_t offset, int fd, uint64_t mrFlags, void** mhandle) {
+  void* unusedGinHandle;
+  NCCLCHECK(ncclRma_v13->regMrSymDmaBuf(collComm, data, size, type, offset, fd, mrFlags, mhandle, &unusedGinHandle));
+  return ncclSuccess;
+}
+
+ncclRma_t* getNcclRma_v13(void* lib) {
+  ncclRma_v13 = (ncclRma_v13_t*)ncclOsDlsym(lib, "ncclRmaPlugin_v13");
+  // Also try the GIN symbol, as the two should have an equal signature.
+  if (ncclRma_v13 == NULL) ncclRma_v13 = (ncclRma_v13_t*)ncclOsDlsym(lib, "ncclGinPlugin_v13");
+  if (ncclRma_v13) {
+    INFO(NCCL_INIT|NCCL_NET, "NET/Plugin: Loaded rma plugin %s (v13)", ncclRma_v13->name);
+    ncclRma.name = ncclRma_v13->name;
+    ncclRma.init = ncclRma_v13->init;
+    ncclRma.devices = ncclRma_v13->devices;
+    ncclRma.getProperties = ncclRma_v13->getProperties;
+    ncclRma.listen = ncclRma_v13->listen;
+    ncclRma.connect = ncclRma_v13->connect;
+    ncclRma.createContext = ncclRma_createContext;
+    ncclRma.regMrSym = ncclRma_regMrSym;
+    ncclRma.regMrSymDmaBuf = ncclRma_regMrSymDmaBuf;
+    ncclRma.deregMrSym = ncclRma_v13->deregMrSym;
+    ncclRma.destroyContext = ncclRma_v13->destroyContext;
+    ncclRma.closeColl = ncclRma_v13->closeColl;
+    ncclRma.closeListen = ncclRma_v13->closeListen;
+    ncclRma.iput = ncclRma_v13->iput;
+    ncclRma.iputSignal = ncclRma_v13->iputSignal;
+    ncclRma.iget = ncclRma_v13->iget;
+    ncclRma.iflush = ncclRma_v13->iflush;
+    ncclRma.test = ncclRma_v13->test;
+    ncclRma.rmaProgress = ncclRma_v13->ginProgress;
+    ncclRma.queryLastError = ncclRma_v13->queryLastError;
+    ncclRma.finalize = ncclRma_v13->finalize;
+    return &ncclRma;
+  }
+  return nullptr;
+}

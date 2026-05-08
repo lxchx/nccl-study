@@ -8,11 +8,13 @@
 #include <assert.h>
 #include "nccl.h"
 #include "gin/gin_host.h"
+#include "gin/gin_host_proxy.h"
 #include "alloc.h"
 #include "checks.h"
 #include "gdrwrap.h"
 #include "nccl_device/gin/proxy/gin_proxy_device_host_common.h"
 #include "compiler.h"
+#include "comm.h"
 
 NCCL_PARAM(GinProxyQueueSize, "GIN_PROXY_QUEUE_SIZE", -1);
 extern int64_t ncclParamIbDataDirect();
@@ -72,10 +74,10 @@ struct ginProxyCtx {
   int nContexts;
   int nCountersPerContext;
   int nSignalsPerContext;
-  void* ginCtx; // from plugin
+  void* rmaCtx; // from plugin
 };
 
-static ncclGin_t* ginBackend;
+static ncclRma_t* rmaBackend;
 
 static ncclResult_t getDmaBufFd(void *addr, size_t length, int *fd,
                                 bool forceNonDataDirect = false) {
@@ -113,7 +115,7 @@ static ncclResult_t proxyGinPollCompletions(void *collComm,
         &hostGpuCtx->states[targetRank * hostGpuCtx->queueSize + idx];
       // no need to poll if already done
       if (!state->done) {
-        ncclResult_t res = ginBackend->test(collComm, state->request, &state->done);
+        ncclResult_t res = rmaBackend->test(collComm, state->request, &state->done);
         if (res != ncclSuccess) {
             ctx->hasError = true;
             WARN("Error on GFD test %d - stateIdx: %lu, request: %p", res, state - hostGpuCtx->states, state->request);
@@ -237,7 +239,7 @@ static ncclResult_t proxyGinProcessGfd(struct ginProxyCtx *ctx,
     void *signalHandle = (void *)(uint64_t)gfd->qword[ncclGinProxyGfdVASignalHandle].vaSignalHandle.vaSignalHandle;
     signalVal = extractSignalVal(gfd);
     signalOp = mapGfdOpToSignalOp(gfd);
-    NCCLCHECK(ginBackend->iputSignal(ctx->ginCtx, hostGpuCtx->contextId, 0, nullptr, 0, 0, nullptr,
+    NCCLCHECK(rmaBackend->iputSignal(ctx->rmaCtx, hostGpuCtx->contextId, 0, nullptr, 0, 0, nullptr,
                                   targetRank, signalOff, signalHandle, signalVal,
                                   signalOp, &state->request));
     return ncclSuccess;
@@ -249,21 +251,21 @@ static ncclResult_t proxyGinProcessGfd(struct ginProxyCtx *ctx,
     uint64_t dstOff = gfd->qword[ncclGinProxyGfdDstOff].dstOff.dstOff;
     void *dstHandle = (void *)(uint64_t)gfd->qword[ncclGinProxyGfdDstHandle].dstHandle.dstHandle;
     uint64_t size = gfd->qword[ncclGinProxyGfdHeader].header.size;
-    if (!ginBackend->iget) {
+    if (!rmaBackend->iget) {
       WARN("GIN plugin does not support GET");
       return ncclInvalidUsage;
     }
-    NCCLCHECK(ginBackend->iget(ctx->ginCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
+    NCCLCHECK(rmaBackend->iget(ctx->rmaCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
                               targetRank, &state->request));
     return ncclSuccess;
   }
 
   if (extractOp(gfd) & ncclGinProxyOpFlush) {
-    if (!ginBackend->iflush) {
+    if (!rmaBackend->iflush) {
       WARN("GIN plugin does not support FLUSH");
       return ncclInvalidUsage;
     }
-    NCCLCHECK(ginBackend->iflush(ctx->ginCtx, hostGpuCtx->contextId, ctx->signalsGinHandle, targetRank,&state->request));
+    NCCLCHECK(rmaBackend->iflush(ctx->rmaCtx, hostGpuCtx->contextId, ctx->signalsGinHandle, targetRank,&state->request));
     if (state->request == NULL) {
       state->done = 1;
     }
@@ -296,14 +298,14 @@ static ncclResult_t proxyGinProcessGfd(struct ginProxyCtx *ctx,
       signalOp = mapGfdOpToSignalOp(gfd);
       if (signalOp == -1) {
         // First cast from 63 bits to 64 bits and then to void * to avoid warnings
-        NCCLCHECK(ginBackend->iput(ctx->ginCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
+        NCCLCHECK(rmaBackend->iput(ctx->rmaCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
                                 targetRank, &state->request));
       } else {
         // Reconstruct the signal value
         signalVal = extractSignalVal(gfd);
         uint64_t signalOff = (gfd->qword[ncclGinProxyGfdCompletion].completion.signalId +
                               hostGpuCtx->contextId * ctx->nSignalsPerContext) * sizeof(uint64_t);
-        NCCLCHECK(ginBackend->iputSignal(ctx->ginCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
+        NCCLCHECK(rmaBackend->iputSignal(ctx->rmaCtx, hostGpuCtx->contextId, srcOff, srcHandle, size, dstOff, dstHandle,
                                       targetRank, signalOff, ctx->signalsGinHandle, signalVal,
                                       signalOp, &state->request));
       }
@@ -327,7 +329,7 @@ static ncclResult_t ncclGinProxyListen(void* ctx, int dev, void* handle, void** 
   struct ncclGinProxyListenComm* lComm;
   NCCLCHECK(ncclCalloc(&lComm, 1));
   lComm->dev = dev;
-  NCCLCHECKGOTO(ginBackend->listen(ctx, dev, handle, &lComm->listenComm), ret, end);
+  NCCLCHECKGOTO(rmaBackend->listen(ctx, dev, handle, &lComm->listenComm), ret, end);
 
 end:
   if (ret != ncclSuccess) free(lComm);
@@ -337,7 +339,7 @@ end:
 
 static ncclResult_t ncclGinProxyCloseListen(void* listenComm) {
   struct ncclGinProxyListenComm* lComm = (struct ncclGinProxyListenComm*)listenComm;
-  NCCLCHECK(ginBackend->closeListen(lComm->listenComm));
+  NCCLCHECK(rmaBackend->closeListen(lComm->listenComm));
   free(lComm);
   return ncclSuccess;
 }
@@ -355,8 +357,8 @@ static ncclResult_t ncclGinProxyConnect(void* ctx, void* handles[], int nranks, 
   struct ncclGinProxyListenComm* lComm = (struct ncclGinProxyListenComm*)listenComm;
   NCCLCHECK(ncclCalloc(&cComm, 1));
   cComm->nRanks = nranks;
-  NCCLCHECKGOTO(ginBackend->getProperties(lComm->dev, &cComm->props), ret, end);
-  NCCLCHECKGOTO(ginBackend->connect(ctx, handles, nranks, rank, lComm->listenComm, &cComm->collComm), ret, end);
+  NCCLCHECKGOTO(rmaBackend->getProperties(lComm->dev, &cComm->props), ret, end);
+  NCCLCHECKGOTO(rmaBackend->connect(ctx, handles, nranks, rank, lComm->listenComm, &cComm->collComm), ret, end);
 
 end:
   if (ret != ncclSuccess) free(cComm);
@@ -366,7 +368,7 @@ end:
 
 static ncclResult_t ncclGinProxyCloseColl(void* collComm) {
   struct ncclGinProxyCollComm* cComm = (struct ncclGinProxyCollComm*)collComm;
-  NCCLCHECK(ginBackend->closeColl(cComm->collComm));
+  NCCLCHECK(rmaBackend->closeColl(cComm->collComm));
   free(cComm);
   return ncclSuccess;
 }
@@ -377,7 +379,7 @@ static ncclResult_t ncclGinProxyRegMrSym(void* ginCtx, void* addr, size_t size, 
                                          uint64_t mrFlags, void** mhandle, void **ginHandle) {
   struct ncclGinProxyCollComm* cComm = (struct ncclGinProxyCollComm*)ginCtx;
   if (type == NCCL_PTR_HOST) {
-    NCCLCHECK(ginBackend->regMrSym(cComm->collComm, addr, size, type, mrFlags, mhandle, ginHandle));
+    NCCLCHECK(rmaBackend->regMrSym(cComm->collComm, addr, size, type, mrFlags, mhandle));
   } else if (type == NCCL_PTR_CUDA) {
     ncclResult_t dmabufResult = ncclInvalidUsage;
     if (ncclParamDmaBufEnable() && (cComm->props.ptrSupport & NCCL_PTR_DMABUF)) {
@@ -385,8 +387,8 @@ static ncclResult_t ncclGinProxyRegMrSym(void* ginCtx, void* addr, size_t size, 
       int dmabufFd = -1;
       dmabufResult = getDmaBufFd(addr, size, &dmabufFd);
       if (dmabufResult == ncclSuccess) {
-        registrationResult = ginBackend->regMrSymDmaBuf(cComm->collComm, addr, size, type, 0, dmabufFd,
-                                                     mrFlags, mhandle, ginHandle);
+        registrationResult = rmaBackend->regMrSymDmaBuf(cComm->collComm, addr, size, type, 0, dmabufFd,
+                                                     mrFlags, mhandle);
         close(dmabufFd);
       }
       if (registrationResult != ncclSuccess) {
@@ -395,27 +397,27 @@ static ncclResult_t ncclGinProxyRegMrSym(void* ginCtx, void* addr, size_t size, 
         dmabufFd = -1;
         dmabufResult = getDmaBufFd(addr, size, &dmabufFd, true);
         if (dmabufResult == ncclSuccess) {
-          NCCLCHECK(ginBackend->regMrSymDmaBuf(cComm->collComm, addr, size, type, 0, dmabufFd,
-                                            mrFlags, mhandle, ginHandle));
+          NCCLCHECK(rmaBackend->regMrSymDmaBuf(cComm->collComm, addr, size, type, 0, dmabufFd,
+                                            mrFlags, mhandle));
           close(dmabufFd);
         }
       }
     }
     // Fallback to non-DMA-BUF if the DMA-BUF handle is not supported
     if (dmabufResult != ncclSuccess) {
-      NCCLCHECK(ginBackend->regMrSym(cComm->collComm, addr, size, type, mrFlags, mhandle, ginHandle));
+      NCCLCHECK(rmaBackend->regMrSym(cComm->collComm, addr, size, type, mrFlags, mhandle));
     }
   } else {
     return ncclInvalidUsage;
   }
-
+  *ginHandle = *mhandle;
   return ncclSuccess;
 }
 
 static ncclResult_t ncclGinProxyDeregMrSym(void* collComm, void* mhandle) {
   struct ncclGinProxyCollComm* cComm = (struct ncclGinProxyCollComm*)collComm;
   // Deregister the memory region with the GIN plugin
-  NCCLCHECK(ginBackend->deregMrSym(cComm->collComm, mhandle));
+  NCCLCHECK(rmaBackend->deregMrSym(cComm->collComm, mhandle));
   return ncclSuccess;
 }
 
@@ -437,7 +439,8 @@ static ncclResult_t ncclGinProxyCreateContext(void* collComm, ncclGinConfig_t* c
   proxyCtx->nRanks = cComm->nRanks;
   int nContexts = proxyCtx->nContexts = config->nContexts;
 
-  NCCLCHECK(ginBackend->createContext(cComm->collComm, config, &proxyCtx->ginCtx, NULL));
+  ncclRmaConfig_t rmaConfig = { config->nContexts, config->trafficClass };
+  NCCLCHECK(rmaBackend->createContext(cComm->collComm, &rmaConfig, &proxyCtx->rmaCtx));
 
   // Sanitize the queue size
   uint64_t queueSize = ncclParamGinProxyQueueSize();
@@ -550,7 +553,7 @@ static ncclResult_t ncclGinProxyDestroyContext(void *ginCtx) {
   if (!ginCtx) return ncclSuccess;
   struct ginProxyCtx *ctx = (struct ginProxyCtx *)ginCtx;
 
-  NCCLCHECK(ginBackend->destroyContext(ctx->ginCtx));
+  NCCLCHECK(rmaBackend->destroyContext(ctx->rmaCtx));
 
   // Free counters
   if (ctx) {
@@ -559,7 +562,7 @@ static ncclResult_t ncclGinProxyDestroyContext(void *ginCtx) {
 
     // Free signals
     if (ctx->collComm && ctx->signalsMhandle)
-      ginBackend->deregMrSym(ctx->collComm, ctx->signalsMhandle);
+      rmaBackend->deregMrSym(ctx->collComm, ctx->signalsMhandle);
     if (ctx->signalsDev) NCCLCHECK(ncclCudaFree(ctx->signalsDev, NULL));
 
     // Free hostGpuCtx and its allocations
@@ -572,7 +575,7 @@ static ncclResult_t ncclGinProxyDestroyContext(void *ginCtx) {
         if (hostGpuCtx->states) free(hostGpuCtx->states);
         if (hostGpuCtx->inlines) free(hostGpuCtx->inlines);
         if (ctx->collComm && hostGpuCtx->inlinesMhandle)
-          ginBackend->deregMrSym(ctx->collComm, hostGpuCtx->inlinesMhandle);
+          rmaBackend->deregMrSym(ctx->collComm, hostGpuCtx->inlinesMhandle);
         if (hostGpuCtx->queues) NCCLCHECK(freeMemCPUAccessible(hostGpuCtx->queues, NULL, NULL));
         if (hostGpuCtx->cis || hostGpuCtx->cisGdrHandle)
           NCCLCHECK(freeMemCPUAccessible(hostGpuCtx->cis, hostGpuCtx->cisGdrHandle, NULL));
@@ -609,7 +612,7 @@ static ncclResult_t ncclGinProxyProgress(void *ginCtx) {
         NCCLCHECK(ret);
       }
     }
-    if (ginBackend->ginProgress) ginBackend->ginProgress(ctx->ginCtx);
+    if (rmaBackend->rmaProgress) rmaBackend->rmaProgress(ctx->rmaCtx);
   }
 
   return ncclSuccess;
@@ -618,8 +621,8 @@ static ncclResult_t ncclGinProxyProgress(void *ginCtx) {
 static ncclResult_t ncclGinProxyQueryLastError(void *ginCtx, bool *hasError) {
   struct ginProxyCtx *ctx = (struct ginProxyCtx *)ginCtx;
   *hasError = ctx->hasError;
-  if (ctx->hasError == ncclSuccess && ginBackend->queryLastError)
-    NCCLCHECK(ginBackend->queryLastError(ginCtx, hasError));
+  if (ctx->hasError == ncclSuccess && rmaBackend->queryLastError)
+    NCCLCHECK(rmaBackend->queryLastError(ctx->rmaCtx, hasError));
   return ncclSuccess;
 }
 
@@ -637,28 +640,22 @@ ncclGin_t ncclGinProxy {
   ncclGinProxyDestroyContext,
   ncclGinProxyCloseColl,
   ncclGinProxyCloseListen,
-  NULL, // Will map directly to the plugin: iput()
-  NULL, // Will map directly to the plugin: iputSignal()
-  NULL, // Will map directly to the plugin: iget()
-  NULL, // Will map directly to the plugin: iflush()
-  NULL, // Will map directly to the plugin: test()
   ncclGinProxyProgress,
   ncclGinProxyQueryLastError,
   NULL  // Will map directly to the plugin: finalize()
 };
 
-ncclResult_t ncclGinProxyInit(ncclGin_t** proxyGin) {
-  // Replace the proxy gin plugin by a layer on top, enriching some functionalities with
+int ncclGinProxyVersion = -1;
+
+ncclResult_t ncclGinProxyInit(struct ncclComm* comm) {
+  // Use GIN proxy implementation, based on the RMA plugin and
   // GPU-host communication queues.
-  ginBackend = *proxyGin;
-  ncclGinProxy.name = ginBackend->name;
-  ncclGinProxy.init = ginBackend->init;
-  ncclGinProxy.devices = ginBackend->devices;
-  ncclGinProxy.getProperties = ginBackend->getProperties;
-  ncclGinProxy.iput = ginBackend->iput;
-  ncclGinProxy.iputSignal = ginBackend->iputSignal;
-  ncclGinProxy.test = ginBackend->test;
-  ncclGinProxy.finalize = ginBackend->finalize;
-  *proxyGin = &ncclGinProxy;
+  rmaBackend = comm->rmaState.rmaProxyState.ncclRma;
+  ncclGinProxy.name = rmaBackend->name;
+  ncclGinProxy.init = rmaBackend->init;
+  ncclGinProxy.devices = rmaBackend->devices;
+  ncclGinProxy.getProperties = rmaBackend->getProperties;
+  ncclGinProxy.finalize = rmaBackend->finalize;
+  ncclGinProxyVersion = comm->rmaState.rmaProxyState.rmaVersion;
   return ncclSuccess;
 }

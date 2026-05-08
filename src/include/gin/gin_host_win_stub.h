@@ -34,7 +34,7 @@ typedef struct {
   int trafficClass;
 } ncclGinConfig_t;
 
-/* Plugin struct (same layout as ncclGin_v13_t) so gin->name, gin->regMrSym, etc. compile. Not used at runtime on Windows.
+/* Plugin struct (same layout as ncclGin_v14_t) so gin->name, gin->regMrSym, etc. compile. Not used at runtime on Windows.
  * When __CUDACC__ is defined we are in a .cu file: use a different struct tag (ncclGinHostPlugin) so the name "ncclGin"
  * is left for the device stub's type alias (ncclGin_BackendMask<...>), avoiding redefinition. */
 #if defined(__CUDACC__)
@@ -55,9 +55,6 @@ struct ncclGin {
   ncclResult_t (*destroyContext)(void* ginCtx);
   ncclResult_t (*closeColl)(void* collComm);
   ncclResult_t (*closeListen)(void* listenComm);
-  ncclResult_t (*iput)(void* ginCtx, int context, uint64_t srcOff, void* srcMhandle, size_t size, uint64_t dstOff, void* dstMhandle, uint32_t rank, void** request);
-  ncclResult_t (*iputSignal)(void* ginCtx, int context, uint64_t srcOff, void* srcMhandle, size_t size, uint64_t dstOff, void* dstMhandle, uint32_t rank, uint64_t signalOff, void* signalMhandle, uint64_t signalValue, uint32_t signalOp, void** request);
-  ncclResult_t (*test)(void* collComm, void* request, int* done);
   ncclResult_t (*ginProgress)(void* ginCtx);
   ncclResult_t (*queryLastError)(void* ginCtx, bool* hasError);
   ncclResult_t (*finalize)(void* ctx);
@@ -102,6 +99,8 @@ struct ncclDevComm;
 ncclResult_t setLocalGinType(struct ncclComm* comm);
 ncclResult_t getGlobalGinType(struct ncclComm* comm, ncclGinType_t* ginType);
 ncclResult_t getGlobalRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType);
+ncclResult_t ncclGetGinType(struct ncclComm* comm, ncclGinType_t* ginType);
+ncclResult_t ncclGetRailedGinType(struct ncclComm* comm, ncclGinType_t* ginType);
 ncclResult_t ncclGinConnectOnce(struct ncclComm* comm);
 ncclResult_t ncclGinHostFinalize(struct ncclComm* comm);
 ncclResult_t ncclGinDevCommSetup(struct ncclComm* comm, struct ncclDevCommRequirements const* reqs, struct ncclDevComm* devComm);

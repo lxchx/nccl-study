@@ -227,7 +227,7 @@ struct ncclIbRequest {
       int rank;
     } iget;
   };
-  void* ginProxyCtx;
+  void* rmaProxyCtx;
 };
 
 struct ncclIbNetCommDevBase {

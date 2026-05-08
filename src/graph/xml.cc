@@ -587,18 +587,12 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
 #if NCCL_OS_LINUX
   char* path = NULL;
   NOWARN(ncclOsGetPciPath(busId, &path), NCCL_GRAPH);
+  if (path) NCCLCHECKGOTO(ncclTopoSetAttrFromSys(pciNode, path, "class", "class"), ret, exit);
 
-  if (path) {
-    NCCLCHECKGOTO(ncclTopoSetAttrFromSys(pciNode, path, "class", "class"), ret, exit);
-  }
   ncclResult_t nvmlRet;
   NOWARN(nvmlRet = ncclNvmlDeviceGetHandleByPciBusId(busId, &device), NCCL_GRAPH);
-  if (nvmlRet == ncclSuccess) {
-    nvmlDeviceFound = true;
-  }
-  else {
-    INFO(NCCL_GRAPH, "Topology detection : could not find NVML device for %s, ignoring", busId);
-  }
+  if (nvmlRet == ncclSuccess) nvmlDeviceFound = true;
+
 #elif NCCL_OS_WINDOWS
   char* parentBusId = NULL;
   char deviceClass[MAX_STR_LEN];
@@ -609,18 +603,16 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
     TRACE(NCCL_GRAPH, "Read from Windows SetupDi class=%s", deviceClass);
     isGpuDevice = (strncmp(deviceClass, "0x03", 4) == 0);
   } else {
-    INFO(NCCL_INIT, "ncclTopoGetXmlFromSys: Could not get device class for %s", busId);
+    TRACE(NCCL_INIT, "ncclTopoGetXmlFromSys: Could not get device class for %s", busId);
   }
   if (isGpuDevice) {
     ncclResult_t winNvmlRet;
     NOWARN(winNvmlRet = ncclNvmlDeviceGetHandleByPciBusId(busId, &device), NCCL_GRAPH);
-    if (winNvmlRet == ncclSuccess) {
-      nvmlDeviceFound = true;
-    } else {
-      INFO(NCCL_GRAPH, "Topology detection : could not find NVML device for GPU %s", busId);
-    }
+    if (winNvmlRet == ncclSuccess) nvmlDeviceFound = true;
   }
 #endif
+  if (!nvmlDeviceFound) TRACE(NCCL_GRAPH, "Topology detection : could not find NVML device for %s.", busId);
+
   int index;
   NCCLCHECKGOTONOWARN(xmlGetAttrIndex(pciNode, "vendor", &index), ret, exit, NCCL_GRAPH);
   if (index == -1) {

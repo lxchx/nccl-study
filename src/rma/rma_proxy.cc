@@ -252,7 +252,7 @@ ncclResult_t ncclRmaProxyDestroyContext(ncclGin_t* ginComm, void* rmaProxyCtx){
         uint32_t idx = j & (ctx->queueSize - 1);
         struct ncclRmaProxyDesc *desc = ctx->circularBuffers[i * ctx->queueSize + idx];
         if (desc != NULL) {
-          NCCLCHECK(ncclRmaProxyDestroyDescNonPersistent(desc));
+          NCCLCHECK(ncclRmaProxyDestroyDesc(ctx->comm, &desc));
         }
       }
     }
@@ -270,7 +270,7 @@ ncclResult_t ncclRmaProxyDestroyContext(ncclGin_t* ginComm, void* rmaProxyCtx){
       while (desc != NULL) {
         struct ncclRmaProxyDesc *nextDesc = desc->next;
         ncclIntruQueueDequeue(&ctx->inProgressQueues[i]);
-        NCCLCHECK(ncclRmaProxyDestroyDescNonPersistent(desc));
+        NCCLCHECK(ncclRmaProxyDestroyDesc(ctx->comm, &desc));
         desc = nextDesc;
       }
     }
@@ -283,7 +283,7 @@ ncclResult_t ncclRmaProxyDestroyContext(ncclGin_t* ginComm, void* rmaProxyCtx){
       while (desc != NULL) {
         struct ncclRmaProxyDesc *nextDesc = desc->next;
         ncclIntruQueueDequeue(&ctx->persistentQueues[i]);
-        NCCLCHECK(ncclRmaProxyDestroyDescPersistent(ctx->comm, desc));
+        NCCLCHECK(ncclRmaProxyDestroyDesc(ctx->comm, &desc));
         desc = nextDesc;
       }
     }

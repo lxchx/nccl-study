@@ -11,28 +11,62 @@
 #include "comm.h"
 #include "rma/rma_proxy.h"
 
-// Poll and test completion of InProgress Descs for a given peer
-// Returns after testing head Desc (stops on first incomplete to enforce FIFO)
+// Issue one putSignal op via the network.
+static ncclResult_t ncclRmaProxyIssuePutSignal(
+    ncclGin_t* ncclGin, struct ncclRmaProxyCtx* ctx,
+    struct ncclRmaPutSignalOp* ps) {
+  if (ps->signal.op == 0) {
+    NCCLCHECK(ncclGin->iput(ctx->ginCtx, 0,
+        ps->srcOff, ps->srcHandle, ps->size,
+        ps->dstOff, ps->dstHandle,
+        ps->targetRank, &ps->request));
+  } else {
+    NCCLCHECK(ncclGin->iputSignal(ctx->ginCtx, 0,
+        ps->srcOff, ps->srcHandle, ps->size,
+        ps->dstOff, ps->dstHandle,
+        ps->targetRank, ps->signal.offset, ps->signal.signalMhandle,
+        ps->signal.val, ps->signal.op, &ps->request));
+  }
+  return ncclSuccess;
+}
+
+// Poll and test completion of InProgress Descs for a given peer.
+// Returns after testing head Desc (stops on first incomplete to enforce FIFO).
 static ncclResult_t ncclRmaProxyPollNonPersistCompletion(ncclGin_t *ncclGin, struct ncclRmaProxyCtx *ctx, int peer) {
   while (true) {
-    struct ncclRmaProxyDesc *inProgressDesc = ncclIntruQueueHead(&ctx->inProgressQueues[peer]);
-    if (inProgressDesc == NULL) break;  // No InProgress Descs
+    struct ncclRmaProxyDesc *head = ncclIntruQueueHead(&ctx->inProgressQueues[peer]);
+    if (head == NULL) break;  // No InProgress Descs
 
-    int done = 0;
-    NCCLCHECK(ncclGin->test(ctx->ginCollComm, inProgressDesc->putSignal.request, &done));
-    if (done) {
-      INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollNonPersistCompletion: targetRank=%d descSeq=%lu COMPLETED, updating doneSeq",
-        ctx->comm->rank, inProgressDesc->putSignal.targetRank, inProgressDesc->opSeq);
-
-      // Update the doneSeq for the target rank with RELEASE to ensure GPU sees it
-      COMPILER_ATOMIC_STORE(inProgressDesc->doneSeq, inProgressDesc->opSeq, std::memory_order_release); // sync with the custreamWait aquire semantic
-      // Dequeue and free the completed Desc
-      ncclIntruQueueDequeue(&ctx->inProgressQueues[peer]);
-      NCCLCHECK(ncclRmaProxyDestroyDescNonPersistent(inProgressDesc));
-    } else {
-      // Head is not done - stop testing to enforce FIFO completion order
-      break;
+    bool fullyDone = false;
+    if (head->rmaDescType == ncclRmaDescTypePutSignal) {
+      int done = 0;
+      NCCLCHECK(ncclGin->test(ctx->ginCollComm, head->putSignal.request, &done));
+      fullyDone = (done != 0);
+    } else if (head->rmaDescType == ncclRmaDescTypePutSignalGroup) {
+      for (int i = 0; i < head->putSignalGroup.nOps; i++) {
+        if (head->putSignalGroup.ops[i].request == NULL) continue;
+        int done = 0;
+        NCCLCHECK(ncclGin->test(ctx->ginCollComm,
+                                head->putSignalGroup.ops[i].request, &done));
+        if (done) {
+          // Null the request so we skip this op on subsequent polls.
+          head->putSignalGroup.ops[i].request = NULL;
+          head->putSignalGroup.nRemaining--;
+        }
+      }
+      fullyDone = (head->putSignalGroup.nRemaining == 0);
     }
+
+    if (!fullyDone) break;  // FIFO at this slot - don't peek behind head
+
+    INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollNonPersistCompletion: peer=%d type=%d descSeq=%lu COMPLETED, updating doneSeq",
+      ctx->comm->rank, peer, head->rmaDescType, head->opSeq);
+
+    // Update the doneSeq with RELEASE to ensure GPU sees it
+    COMPILER_ATOMIC_STORE(head->doneSeq, head->opSeq, std::memory_order_release); // sync with the custreamWait acquire semantic
+    // Dequeue and free the completed Desc
+    ncclIntruQueueDequeue(&ctx->inProgressQueues[peer]);
+    NCCLCHECK(ncclRmaProxyDestroyDesc(ctx->comm, &head));
   }
   return ncclSuccess;
 }
@@ -49,35 +83,30 @@ static ncclResult_t ncclRmaProxyPollNonPersistDesc(ncclGin_t *ncclGin, struct nc
 
     // Check if this Desc is ready to be issued
     uint64_t readySeq = COMPILER_ATOMIC_LOAD(pendingDesc->readySeq, std::memory_order_acquire);
-    if (readySeq >= pendingDesc->opSeq) {
-      // Advance CI with RELEASE to ensure descriptor is consumed
-      COMPILER_ATOMIC_STORE_32(&ctx->cis[peer], ci + 1, std::memory_order_release);
-
-      // Issue the network operation
-      if (pendingDesc->putSignal.signal.op == 0) {
-        // No signal operation
-        NCCLCHECK(ncclGin->iput(ctx->ginCtx, 0,
-          pendingDesc->putSignal.srcOff, pendingDesc->putSignal.srcHandle, pendingDesc->putSignal.size,
-          pendingDesc->putSignal.dstOff, pendingDesc->putSignal.dstHandle,
-          pendingDesc->putSignal.targetRank, &pendingDesc->putSignal.request));
-      } else {
-        // Signal operation needed
-        NCCLCHECK(ncclGin->iputSignal(ctx->ginCtx, 0,
-          pendingDesc->putSignal.srcOff, pendingDesc->putSignal.srcHandle, pendingDesc->putSignal.size,
-          pendingDesc->putSignal.dstOff, pendingDesc->putSignal.dstHandle,
-          pendingDesc->putSignal.targetRank, pendingDesc->putSignal.signal.offset, pendingDesc->putSignal.signal.signalMhandle,
-          pendingDesc->putSignal.signal.val, pendingDesc->putSignal.signal.op, &pendingDesc->putSignal.request));
-      }
-
-      // Enqueue to InProgress queue (no lock needed - progress thread only)
-      ncclIntruQueueEnqueue(&ctx->inProgressQueues[peer], pendingDesc);
-
-      INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollNonPersistDesc: targetRank=%d descSeq=%lu readySeq=%lu srcOff=%lu srcHandle=%p dstOff=%lu dstHandle=%p size=%lu - issuing network operation",
-        ctx->comm->rank, pendingDesc->putSignal.targetRank, pendingDesc->opSeq, readySeq, pendingDesc->putSignal.srcOff, pendingDesc->putSignal.srcHandle, pendingDesc->putSignal.dstOff, pendingDesc->putSignal.dstHandle, pendingDesc->putSignal.size);
-    } else {
+    if (readySeq < pendingDesc->opSeq) {
       // ReadySeq not ready yet - stop processing this peer's pending queue to maintain FIFO order
       break;
     }
+
+    // Advance CI with RELEASE to ensure descriptor is consumed
+    COMPILER_ATOMIC_STORE_32(&ctx->cis[peer], ci + 1, std::memory_order_release);
+
+    if (pendingDesc->rmaDescType == ncclRmaDescTypePutSignal) {
+      NCCLCHECK(ncclRmaProxyIssuePutSignal(ncclGin, ctx, &pendingDesc->putSignal));
+      INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollNonPersistDesc: targetRank=%d descSeq=%lu readySeq=%lu srcOff=%lu srcHandle=%p dstOff=%lu dstHandle=%p size=%lu - issuing network operation",
+        ctx->comm->rank, pendingDesc->putSignal.targetRank, pendingDesc->opSeq, readySeq, pendingDesc->putSignal.srcOff, pendingDesc->putSignal.srcHandle, pendingDesc->putSignal.dstOff, pendingDesc->putSignal.dstHandle, pendingDesc->putSignal.size);
+    } else if (pendingDesc->rmaDescType == ncclRmaDescTypePutSignalGroup) {
+      pendingDesc->putSignalGroup.nRemaining = pendingDesc->putSignalGroup.nOps;
+      for (int i = 0; i < pendingDesc->putSignalGroup.nOps; i++) {
+        NCCLCHECK(ncclRmaProxyIssuePutSignal(
+            ncclGin, ctx, &pendingDesc->putSignalGroup.ops[i]));
+      }
+      INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollNonPersistDesc: Group(nOps=%d) descSeq=%lu readySeq=%lu - issuing all ops",
+        ctx->comm->rank, pendingDesc->putSignalGroup.nOps, pendingDesc->opSeq, readySeq);
+    }
+
+    // Enqueue to InProgress queue (no lock needed - progress thread only)
+    ncclIntruQueueEnqueue(&ctx->inProgressQueues[peer], pendingDesc);
   }
   return ncclSuccess;
 }
@@ -113,18 +142,7 @@ static ncclResult_t ncclRmaProxyPollPersistDesc(ncclGin_t *ncclGin, struct ncclR
         if (readyVal == 1) {
           COMPILER_ATOMIC_STORE(desc->readySeq, (uint64_t)0, std::memory_order_relaxed);
 
-          if (desc->putSignal.signal.op == 0) {
-            NCCLCHECK(ncclGin->iput(ctx->ginCtx, 0,
-              desc->putSignal.srcOff, desc->putSignal.srcHandle, desc->putSignal.size,
-              desc->putSignal.dstOff, desc->putSignal.dstHandle,
-              desc->putSignal.targetRank, &desc->putSignal.request));
-          } else {
-            NCCLCHECK(ncclGin->iputSignal(ctx->ginCtx, 0,
-              desc->putSignal.srcOff, desc->putSignal.srcHandle, desc->putSignal.size,
-              desc->putSignal.dstOff, desc->putSignal.dstHandle,
-              desc->putSignal.targetRank, desc->putSignal.signal.offset, desc->putSignal.signal.signalMhandle,
-              desc->putSignal.signal.val, desc->putSignal.signal.op, &desc->putSignal.request));
-          }
+          NCCLCHECK(ncclRmaProxyIssuePutSignal(ncclGin, ctx, &desc->putSignal));
 
           desc->rmaDescState = ncclRmaDescStateInProgress;
           INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollPersistDesc: peer=%d PutSignal issued", ctx->comm->rank, peer);
@@ -138,6 +156,45 @@ static ncclResult_t ncclRmaProxyPollPersistDesc(ncclGin_t *ncclGin, struct ncclR
           COMPILER_ATOMIC_STORE(desc->doneSeq, (uint64_t)1, std::memory_order_release);
           desc->rmaDescState = ncclRmaDescStateReady;
           INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollPersistDesc: peer=%d PutSignal completed, doneSeq set",
+            ctx->comm->rank, peer);
+        }
+      }
+    }
+    else if (desc->rmaDescType == ncclRmaDescTypePutSignalGroup) {
+      // Group descs only land at peer == comm->rank (see ncclRmaProxyEnqueueDesc).
+      // State machine mirrors PutSignal but issues / tests nOps requests.
+      if (desc->rmaDescState == ncclRmaDescStateReady) {
+        uint64_t readyVal = COMPILER_ATOMIC_LOAD(desc->readySeq, std::memory_order_acquire);
+        if (readyVal == 1) {
+          COMPILER_ATOMIC_STORE(desc->readySeq, (uint64_t)0, std::memory_order_relaxed);
+
+          desc->putSignalGroup.nRemaining = desc->putSignalGroup.nOps;
+          for (int i = 0; i < desc->putSignalGroup.nOps; i++) {
+            NCCLCHECK(ncclRmaProxyIssuePutSignal(
+                ncclGin, ctx, &desc->putSignalGroup.ops[i]));
+          }
+
+          desc->rmaDescState = ncclRmaDescStateInProgress;
+          INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollPersistDesc: peer=%d Group(nOps=%d) issued",
+            ctx->comm->rank, peer, desc->putSignalGroup.nOps);
+        }
+      }
+      else if (desc->rmaDescState == ncclRmaDescStateInProgress) {
+        for (int i = 0; i < desc->putSignalGroup.nOps; i++) {
+          if (desc->putSignalGroup.ops[i].request == NULL) continue;
+          int done = 0;
+          NCCLCHECK(ncclGin->test(ctx->ginCollComm,
+                                  desc->putSignalGroup.ops[i].request, &done));
+          if (done) {
+            // Null the request so we skip this op on subsequent polls.
+            desc->putSignalGroup.ops[i].request = NULL;
+            desc->putSignalGroup.nRemaining--;
+          }
+        }
+        if (desc->putSignalGroup.nRemaining == 0) {
+          COMPILER_ATOMIC_STORE(desc->doneSeq, (uint64_t)1, std::memory_order_release);
+          desc->rmaDescState = ncclRmaDescStateReady;
+          INFO(NCCL_COLL, "Rank %d ncclRmaProxyPollPersistDesc: peer=%d Group complete, doneSeq set",
             ctx->comm->rank, peer);
         }
       }

@@ -25,6 +25,9 @@ struct ncclGinBarrierSession_internal {
   ncclGinBarrierHandle handle;
   int index;
   ncclGinSignal_t signal;
+  // True when constructed from an `ncclGinAllContexts` tag: fence flushes every GIN
+  // context on the comm instead of just `net`'s context. Signal/wait still runs on `net`.
+  bool fenceAllContexts;
 
   template<bool EnableTimeout>
   NCCL_DEVICE_INLINE ncclResult_t syncInternal(Coop, cuda::memory_order ord, ncclGinFenceLevel fence,

@@ -68,6 +68,50 @@ NCCL_DEVICE_INLINE ncclBarrierSession<Coop>::ncclBarrierSession(
 }
 #endif
 
+// All-contexts hybrid-barrier constructors. Inner GIN barrier is built with the all-contexts
+// tag so its fence iterates every GIN context on the comm. The outer LSA barrier is unchanged
+// (LSA has no GIN ops to drain).
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclBarrierSession<Coop>::ncclBarrierSession(
+    Coop coop, ncclTeam innerTeam, ncclTeam outerTeam, ncclGinAllContexts allCtx,
+    ncclLsaBarrierHandle innerHandle, ncclGinBarrierHandle outerHandle,
+    uint32_t index, bool multimem, ncclMultimemHandle innerMmHandle
+  ):
+  ncclBarrierSession_internal<Coop>(coop,
+    nccl::utility::present(ncclGin(allCtx.comm, 0)),
+    nccl::utility::present(coop, allCtx.comm, innerTeam, innerHandle, index, multimem, innerMmHandle),
+    nccl::utility::present(coop, allCtx, outerTeam, outerHandle, index)
+  ) {
+}
+#endif
+
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclBarrierSession<Coop>::ncclBarrierSession(
+    Coop coop, ncclTeamTagWorld, ncclGinAllContexts allCtx, uint32_t index, bool multimem
+  ):
+  ncclBarrierSession<Coop>(
+    coop, ncclTeamLsa(allCtx.comm), ncclTeamRail(allCtx.comm), allCtx,
+    allCtx.comm.hybridLsaBarrier, allCtx.comm.hybridRailGinBarrier,
+    index, multimem, allCtx.comm.lsaMultimem
+  ) {
+}
+#endif
+
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclBarrierSession<Coop>::ncclBarrierSession(
+    Coop coop, ncclTeamTagRail, ncclGinAllContexts allCtx, uint32_t index
+  ):
+  ncclBarrierSession_internal<Coop>(coop,
+    nccl::utility::present(ncclGin(allCtx.comm, 0)),
+    nccl::utility::Absent(),
+    nccl::utility::present(coop, allCtx, ncclTeamRail(allCtx.comm), allCtx.comm.hybridRailGinBarrier, index)
+  ) {
+}
+#endif
+
 #if NCCL_CHECK_CUDACC
 template<typename Coop>
 NCCL_DEVICE_INLINE ncclLsaBarrierSession<Coop>& ncclBarrierSession<Coop>::lsaBarrier() {
@@ -150,6 +194,41 @@ NCCL_DEVICE_INLINE ncclResult_t ncclBarrierSession<Coop>::sync(
   if (lsaResult != ncclSuccess) return lsaResult;
   if (railResult != ncclSuccess) return railResult;
   return lsaResult2;
+}
+#endif
+
+// Free-function hybrid barrier: thin wrappers around session construct + sync + destruct.
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclBarrier(
+    Coop coop, ncclTeamTagWorld tag, ncclGin gin, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence, bool multimem) {
+  ncclBarrierSession<Coop> session(coop, tag, gin, index, multimem);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclBarrier(
+    Coop coop, ncclTeamTagRail tag, ncclGin gin, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclBarrierSession<Coop> session(coop, tag, gin, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclBarrier(
+    Coop coop, ncclTeamTagWorld tag, ncclGinAllContexts allCtx, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence, bool multimem) {
+  ncclBarrierSession<Coop> session(coop, tag, allCtx, index, multimem);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclBarrier(
+    Coop coop, ncclTeamTagRail tag, ncclGinAllContexts allCtx, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclBarrierSession<Coop> session(coop, tag, allCtx, index);
+  session.sync(coop, ord, fence);
 }
 #endif
 

@@ -74,20 +74,6 @@ typedef enum {
   NCCL_GIN_CONNECTION_RAIL,
 } ncclGinConnectionType_t;
 
-// Sentinel values for the `contextIndex` argument of `ncclGin` / `ncclGin_C` constructors.
-// Negative ints, distinct from any valid context index. Detected at gin construction time;
-// see `ncclGinInitCommon` in `impl/gin__funcs.h`.
-//
-// NCCL_GIN_CONTEXT_ALL: when this gin is passed to a barrier with fence != None, the
-//   barrier's fence drains every GIN context on the comm (not just one). Single-context
-//   ops (put/get/signal/wait) fall back to context 0 — using this gin for non-barrier work
-//   is not recommended.
-// NCCL_GIN_CONTEXT_ANY: reserved for a future ergonomic feature (auto-pick a context per
-//   CTA, e.g. blockIdx.x % comm.ginContextCount). Currently falls back to context 0
-//   deterministically; do not use yet.
-#define NCCL_GIN_CONTEXT_ALL  (-1)
-#define NCCL_GIN_CONTEXT_ANY  (-2)
-
 struct ncclDevCommRequirements {
   /* attributes that users should never touch. */
   size_t size;

@@ -16,6 +16,7 @@ NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::ncclGinBarrierSession(
   ):
   ncclGinBarrierSession_internal<Coop>{coop, net, team, handle, (int)barrierIndex} {
   this->signal = handle.signal0 + barrierIndex * team.nRanks;
+  this->fenceAllContexts = false;
 }
 #endif
 
@@ -37,6 +38,38 @@ NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::ncclGinBarrierSession(
 }
 #endif
 
+// All-contexts constructors: build a single-context gin (context 0) for the signal/wait
+// path, then flip the `fenceAllContexts` flag so the fence iterates every GIN context on
+// the comm.
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::ncclGinBarrierSession(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeam team, ncclGinBarrierHandle handle, uint32_t barrierIndex
+  ):
+  ncclGinBarrierSession_internal<Coop>{coop, ncclGin(allCtx.comm, 0), team, handle, (int)barrierIndex} {
+  this->signal = handle.signal0 + barrierIndex * team.nRanks;
+  this->fenceAllContexts = true;
+}
+#endif
+
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::ncclGinBarrierSession(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeamTagRail, uint32_t barrierIndex
+  ):
+  ncclGinBarrierSession(coop, allCtx, ncclTeamRail(allCtx.comm), allCtx.comm.railGinBarrier, barrierIndex) {
+}
+#endif
+
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::ncclGinBarrierSession(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeamTagWorld, uint32_t barrierIndex
+  ):
+  ncclGinBarrierSession(coop, allCtx, ncclTeamWorld(allCtx.comm), allCtx.comm.worldGinBarrier, barrierIndex) {
+}
+#endif
+
 #if NCCL_CHECK_CUDACC
 template<typename Coop>
 NCCL_DEVICE_INLINE ncclGinBarrierSession<Coop>::~ncclGinBarrierSession() {
@@ -53,12 +86,19 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   this->coop.sync();
   // For fence containing Put: drain prior outgoing puts on this context before signaling so
   // peers, upon observing our signal, see our outgoing data already settled at their
-  // destinations. ncclGin_flushAll iterates every context if this gin was constructed with
-  // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. The
-  // release-order argument is passed through to the proxy backend; GDAKI ignores it (DOCA
-  // already guarantees memory_order_acquire on flush completion).
+  // destinations. When the session was constructed from `ncclGinAllContexts(comm)` the
+  // fence iterates every GIN context; otherwise it's a one-shot flush on the bound context.
+  // The release-order argument is passed through to the proxy backend; GDAKI ignores it
+  // (DOCA already guarantees memory_order_acquire on flush completion).
   if ((fence & ncclGinFenceLevel::Put) != ncclGinFenceLevel::None) {
-    ncclGin_flushAll(this->net, this->coop, nccl::utility::releaseOrderOf(ord));
+    if (this->fenceAllContexts) {
+      for (uint32_t i = 0; i < this->net.comm.ginContextCount; ++i) {
+        ncclGin scratch(this->net.comm, (int)i, this->net.resourceSharingMode);
+        scratch.flush(this->coop, nccl::utility::releaseOrderOf(ord));
+      }
+    } else {
+      this->net.flush(this->coop, nccl::utility::releaseOrderOf(ord));
+    }
   }
   if NCCL_IF_CONSTEXPR (EnableTimeout) {
     startCycle = clock64();
@@ -96,12 +136,19 @@ NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession_internal<Coop>::syncIntern
   }
   // For fence containing Get: drain prior outgoing gets on this context after waiting so that,
   // on successful barrier exit, all RDMA-Read responses targeting this rank's local buffers
-  // have been DMA'd into GPU memory and are visible after the trailing coop.sync().
-  // ncclGin_flushAll iterates every context if this gin was constructed with
-  // NCCL_GIN_CONTEXT_ALL; otherwise it's a one-shot flush on the bound context. Skipped on
-  // the timeout path (control jumps directly to exit: with ret = ncclTimeout).
+  // have been DMA'd into GPU memory and are visible after the trailing coop.sync(). When the
+  // session was constructed from `ncclGinAllContexts(comm)` the fence iterates every GIN
+  // context; otherwise it's a one-shot flush. Skipped on the timeout path (control jumps
+  // directly to exit: with ret = ncclTimeout).
   if ((fence & ncclGinFenceLevel::Get) != ncclGinFenceLevel::None) {
-    ncclGin_flushAll(this->net, this->coop, nccl::utility::acquireOrderOf(ord));
+    if (this->fenceAllContexts) {
+      for (uint32_t i = 0; i < this->net.comm.ginContextCount; ++i) {
+        ncclGin scratch(this->net.comm, (int)i, this->net.resourceSharingMode);
+        scratch.flush(this->coop, nccl::utility::acquireOrderOf(ord));
+      }
+    } else {
+      this->net.flush(this->coop, nccl::utility::acquireOrderOf(ord));
+    }
   }
   goto exit; // Silence a compiler warning.
 exit:
@@ -123,6 +170,57 @@ template<typename Coop>
 NCCL_DEVICE_INLINE ncclResult_t ncclGinBarrierSession<Coop>::sync(
     Coop coop, cuda::memory_order ord, ncclGinFenceLevel fence, uint64_t timeoutCycles) {
   return this->template syncInternal</*EnableTimeout=*/true>(coop, ord, fence, timeoutCycles);
+}
+#endif
+
+// Free-function GIN barrier: thin wrappers around session construct + sync + destruct.
+#if NCCL_CHECK_CUDACC
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGin gin, ncclTeam team, ncclGinBarrierHandle handle, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, gin, team, handle, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGin gin, ncclTeamTagRail tag, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, gin, tag, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGin gin, ncclTeamTagWorld tag, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, gin, tag, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeam team, ncclGinBarrierHandle handle,
+    uint32_t index, cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, allCtx, team, handle, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeamTagRail tag, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, allCtx, tag, index);
+  session.sync(coop, ord, fence);
+}
+
+template<typename Coop>
+NCCL_DEVICE_INLINE void ncclGinBarrier(
+    Coop coop, ncclGinAllContexts allCtx, ncclTeamTagWorld tag, uint32_t index,
+    cuda::memory_order ord, ncclGinFenceLevel fence) {
+  ncclGinBarrierSession<Coop> session(coop, allCtx, tag, index);
+  session.sync(coop, ord, fence);
 }
 #endif
 

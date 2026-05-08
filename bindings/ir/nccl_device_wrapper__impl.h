@@ -84,6 +84,16 @@ NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE void ncclGinBarrierSessionInit(
     ::new (&(session->bar)) ncclGinBarrierSession<ncclCoopAny>(coop, reinterpret_cast<ncclGin const&>(net), team, handle, index);
 }
 
+NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE void ncclGinBarrierSessionInitAllContexts(
+    ncclGinBarrierSession_C* session,
+    ncclCoopAny coop,
+    ncclDevComm const& comm,
+    ncclTeam team,
+    ncclGinBarrierHandle handle,
+    uint32_t index) {
+    ::new (&(session->bar)) ncclGinBarrierSession<ncclCoopAny>(coop, ncclGinAllContexts(comm), team, handle, index);
+}
+
 NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE void ncclGinBarrierSessionSync(
     ncclGinBarrierSession_C* session,
     ncclCoopAny coop,
@@ -104,6 +114,20 @@ NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE void ncclBarrierSessionInit(
     uint32_t index,
     bool multimem, ncclMultimemHandle const innerMmHandle) {
     ::new (&(session->bar)) ncclBarrierSession<ncclCoopAny>(coop, innerTeam, outerTeam, reinterpret_cast<ncclGin const&>(net),
+           innerBarHandle, outerBarHandle, index, multimem, innerMmHandle);
+}
+
+NCCL_IR_EXTERN_C NCCL_DEVICE_INLINE void ncclBarrierSessionInitAllContexts(
+    ncclBarrierSession_C* session,
+    ncclCoopAny coop,
+    ncclTeam innerTeam,
+    ncclTeam outerTeam,
+    ncclDevComm const& comm,
+    ncclLsaBarrierHandle const innerBarHandle,
+    ncclGinBarrierHandle const outerBarHandle,
+    uint32_t index,
+    bool multimem, ncclMultimemHandle const innerMmHandle) {
+    ::new (&(session->bar)) ncclBarrierSession<ncclCoopAny>(coop, innerTeam, outerTeam, ncclGinAllContexts(comm),
            innerBarHandle, outerBarHandle, index, multimem, innerMmHandle);
 }
 

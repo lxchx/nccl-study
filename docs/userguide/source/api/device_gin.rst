@@ -23,15 +23,10 @@ ncclGin
       performance-oriented kernels should cycle among the available contexts to improve resource utilization (the number of
       available contexts is available via :c:macro:`ginContextCount`).
 
-      Two sentinel values are reserved for *contextIndex*:
-
-      * :c:macro:`NCCL_GIN_CONTEXT_ALL` (``-1``): when this gin is passed to a barrier with ``fence != None``, the barrier's
-        flush iterates every GIN context on the comm — extending fence semantics across all contexts at once. Useful when
-        operations have been sharded across multiple contexts (e.g. multi-NIC) and a single barrier call needs to drain all
-        of them. Single-context operations (``put``/``get``/``signal``/``wait``) on a gin constructed with this sentinel fall
-        back to context 0; using such a gin for non-barrier work is not recommended.
-      * :c:macro:`NCCL_GIN_CONTEXT_ANY` (``-2``): reserved for a future ergonomic feature (auto-pick a context per CTA).
-        Currently falls back to context 0 deterministically; **do not use yet**.
+      ``ncclGin`` always represents one specific context. To run a barrier whose fence drains every GIN context on the comm
+      (useful when operations have been sharded across multiple contexts -- e.g. multi-NIC), pass
+      ``ncclGinAllContexts(comm)`` to :cpp:func:`ncclGinBarrier` or :cpp:func:`ncclBarrier` in place of an ``ncclGin``. The
+      barrier still uses one concrete context (context 0) for the signal/wait coordination; only the fence iterates.
 
    .. cpp:function:: void put(ncclTeam team, int peer, ncclWindow_t dstWnd, size_t dstOffset, ncclWindow_t srcWnd, \
       size_t srcOffset, size_t bytes, \

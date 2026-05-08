@@ -66,6 +66,16 @@ NCCL_IR_EXTERN_C __device__ void ncclGinBarrierSessionInit(
     ncclGinBarrierHandle handle,
     uint32_t index);
 
+// All-contexts variant of session-init: rail/world/etc. signal/wait happens on context 0,
+// fence iterates every GIN context on the comm.
+NCCL_IR_EXTERN_C __device__ void ncclGinBarrierSessionInitAllContexts(
+    ncclGinBarrierSession_C* session,
+    ncclCoopAny coop,
+    ncclDevComm const& comm,
+    ncclTeam team,
+    ncclGinBarrierHandle handle,
+    uint32_t index);
+
 NCCL_IR_EXTERN_C __device__ void ncclGinBarrierSessionSync(
     ncclGinBarrierSession_C* session,
     ncclCoopAny coop,
@@ -79,6 +89,17 @@ NCCL_IR_EXTERN_C __device__ void ncclBarrierSessionInit(
     ncclTeam innerTeam,
     ncclTeam outerTeam,
     ncclGin_C net,
+    ncclLsaBarrierHandle const innerBarHandle,
+    ncclGinBarrierHandle const outerBarHandle,
+    uint32_t index,
+    bool multimem=false, ncclMultimemHandle const innerMmHandle={});
+
+NCCL_IR_EXTERN_C __device__ void ncclBarrierSessionInitAllContexts(
+    ncclBarrierSession_C* session,
+    ncclCoopAny coop,
+    ncclTeam innerTeam,
+    ncclTeam outerTeam,
+    ncclDevComm const& comm,
     ncclLsaBarrierHandle const innerBarHandle,
     ncclGinBarrierHandle const outerBarHandle,
     uint32_t index,

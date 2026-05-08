@@ -1327,15 +1327,15 @@ ncclResult_t ncclTopoFindLinkWidthRec(ncclXmlNode* node, ncclXmlNode** physNetNo
   if (*foundPhysNet == 0) {
     // No child NICs were found, do not accrue any detected link_width
     *linkWidth = 0;
-    INFO(NCCL_GRAPH, "Did not find child net device. Returning link_width=%d totalChildLinkWidth=%d", *linkWidth, totalChildLinkWidth);
+    TRACE(NCCL_GRAPH, "Did not find child net device. Returning link_width=%d totalChildLinkWidth=%d", *linkWidth, totalChildLinkWidth);
   } else if (totalChildLinkWidth == 0) {
     // If A child NIC was found but no link_width was detected among children, assign the link_width to mine (I am the first pci node right above the physNetNode).
     *linkWidth = myLinkWidth;
-    INFO(NCCL_GRAPH, "Found child net device for %s. Returning link_width=%d totalChildLinkWidth=%d", node->name, *linkWidth, totalChildLinkWidth);
+    TRACE(NCCL_GRAPH, "Found child net device for %s. Returning link_width=%d totalChildLinkWidth=%d", node->name, *linkWidth, totalChildLinkWidth);
   } else {
   // Standard recursive accrual of link_width. The link_width is either the bottleneck of this PCI node's width or the sum of its children's width.
     *linkWidth = myLinkWidth > 0 ? std::min(myLinkWidth, totalChildLinkWidth) : totalChildLinkWidth;
-    INFO(NCCL_GRAPH, "Found child net device for %s. Returning link_width=%d totalChildLinkWidth=%d", node->name, *linkWidth, totalChildLinkWidth);
+    TRACE(NCCL_GRAPH, "Found child net device for %s. Returning link_width=%d totalChildLinkWidth=%d", node->name, *linkWidth, totalChildLinkWidth);
   }
 
   return ncclSuccess;

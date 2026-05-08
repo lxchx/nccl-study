@@ -1092,6 +1092,7 @@ ncclResult_t ncclTopoMakeUniqueBusId(struct ncclXml* xml, char* busId, struct nc
   return ncclInternalError;
 }
 
+// Add a new PCI node with a unique busId under (*parent) and overwrite the value of (*parent) to point to the new node
 ncclResult_t ncclTopoMakePciParent(struct ncclXml* xml, struct ncclXmlNode** parent, struct ncclXmlNode* physNetNode) {
   struct ncclXmlNode* newBusId = NULL;
   struct ncclXmlNode* pci = physNetNode->parent;
@@ -1358,28 +1359,6 @@ ncclResult_t ncclTopoFindLinkWidth(ncclXmlNode* parent, ncclXmlNode** physNetNod
   return ncclSuccess;
 }
 
-ncclResult_t ncclTopoWidenLinks(ncclXmlNode** physNetNodes, int ndevs, ncclXmlNode* parent) {
-  int sumLinkWidth = 0;
-  NCCLCHECK(ncclTopoFindLinkWidth(parent, physNetNodes, ndevs, &sumLinkWidth));
-  for (int i = 0; i < ndevs; i++) {
-    ncclXmlNode* temp = physNetNodes[i];
-    while (temp != parent) {
-      if (strcmp(temp->name, "pci") == 0) {
-        NCCLCHECK(xmlSetAttrInt(temp, "link_width", sumLinkWidth));
-        TRACE(NCCL_GRAPH, "Set link_width to %d for node %s", sumLinkWidth, temp->name);
-      }
-      temp = temp->parent;
-    }
-  }
-
-  if (strcmp(parent->name, "pci") == 0) {
-    NCCLCHECK(xmlSetAttrInt(parent, "link_width", sumLinkWidth));
-    TRACE(NCCL_GRAPH, "Set link_width to %d for node %s", sumLinkWidth, parent->name);
-  }
-
-  return ncclSuccess;
-}
-
 ncclResult_t ncclTopoGetVNicParent(struct ncclXml* xml, ncclResult_t (*getProperties)(int, ncclNetProperties_t*), ncclNetVDeviceProps_t* vProps, ncclXmlNode** parent) {
   ncclNetProperties_t props[NCCL_NET_MAX_DEVS_PER_NIC];
   ncclXmlNode* physNetNodes[NCCL_NET_MAX_DEVS_PER_NIC];
@@ -1393,23 +1372,36 @@ ncclResult_t ncclTopoGetVNicParent(struct ncclXml* xml, ncclResult_t (*getProper
 
   int path = PATH_LOC;
   NCCLCHECK(ncclTopoGetPath(physNetNodes, vProps->ndevs, &path, parent));
+  int aggregateWidth = 0;
   if (path == PATH_PHB || path == PATH_PXB || path == PATH_PIX) {
-    INFO(NCCL_GRAPH, "Widening links");
-    NCCLCHECK(ncclTopoWidenLinks(physNetNodes, vProps->ndevs, *parent));
+    NCCLCHECK(ncclTopoFindLinkWidth(*parent, physNetNodes, vProps->ndevs, &aggregateWidth));
   }
 
+  // If the common parent is a PCI switch or the CPU, we must reparent the new NIC under a made up pci device with a unique busid
+  // This adds a pci node between the physNetParent and the fused NIC.
+  struct ncclXmlNode* physNetParent = *parent;
   if (*parent) {
     if (strcmp((*parent)->name, "pci") == 0) {
       // Compare PCI class here to avoid NCCL WARN when the "class" attribute doesn't exist
       const char* c;
       NCCLCHECK(xmlGetAttrStr(*parent, "class", &c));
       if (c && strcmp(c, PCI_BRIDGE_DEVICE_CLASS) == 0) {
-        // If the common parent is a PCI switch, we must reparent the new NIC under a made up pci device with a unique busid
         NCCLCHECK(ncclTopoMakePciParent(xml, parent, physNetNodes[0]));
       }
     } else if (strcmp((*parent)->name, "cpu") == 0) {
-      // If the common parent is a PCI switch, we must reparent the new NIC under a made up pci device with a unique busid
+      // If the common parent is a CPU, we must reparent the new NIC under a made up pci device with a unique busid
       NCCLCHECK(ncclTopoMakePciParent(xml, parent, physNetNodes[0]));
+    }
+  }
+
+  // Update the speed for all the pci nodes between the parent and the physNetparent
+  if (aggregateWidth > 0) {
+    struct ncclXmlNode* node = *parent;
+    while (node) {
+      TRACE(NCCL_GRAPH, "Set link_width to %d for vNIC parent %s", aggregateWidth, (*parent)->name);
+      if (strcmp(node->name, "pci") == 0) NCCLCHECK(xmlSetAttrInt(node, "link_width", aggregateWidth));
+      if (node == physNetParent) break;
+      node = node->parent;
     }
   }
 

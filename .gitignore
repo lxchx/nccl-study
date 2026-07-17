@@ -1,7 +1,9 @@
+.cache/
+.understand-anything/
+build/
 *.o
 *.so
 *.a
-build/
 .direnv/
 __pycache__/
-*.pyc
+compile_commands.json

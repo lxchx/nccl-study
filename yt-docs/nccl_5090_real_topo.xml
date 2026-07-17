@@ -1,0 +1,46 @@
+<system>
+    <!-- ==================== NUMA Node 0 (CPU/0) ==================== -->
+    <cpu id="0" numaid="0" arch="x86_64" vendor="Intel" affinity="0-23,96-119">
+        
+        <!-- GPU Group 1: PHB-connected via CPU/0-0 -->
+        <pci busid="27:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="0" dev="0" sm="120" gdr="0"/>
+        </pci>
+        <pci busid="38:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="1" dev="1" sm="120" gdr="0"/>
+        </pci>
+        
+        <!-- GPU Group 2: PHB-connected via CPU/0-1 -->
+        <pci busid="49:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="2" dev="2" sm="120" gdr="0"/>
+        </pci>
+        <pci busid="5a:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="3" dev="3" sm="120" gdr="0"/>
+        </pci>
+        
+        <!-- GPU Group 3: PHB-connected via CPU/0-2 -->
+        <pci busid="98:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="4" dev="4" sm="120" gdr="0"/>
+        </pci>
+        <pci busid="a8:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="5" dev="5" sm="120" gdr="0"/>
+        </pci>
+        <pci busid="b8:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="6" dev="6" sm="120" gdr="0"/>
+        </pci>
+        
+        <!-- GPU 7: isolated (only SYS path) via CPU/0-3 -->
+        <pci busid="c8:00.0" class="0x03" link_width="16" link_speed="32.0 GT/s">
+            <gpu rank="7" dev="7" sm="120" gdr="0"/>
+        </pci>
+        
+    </cpu>
+
+    <!-- ==================== Network Interface ==================== -->
+    <nic>
+        <net name="bond0" dev="0" speed="10000" gdr="0">
+            <!-- bond0 has virtual PCI bus (5000.0 GB/s for local traffic) -->
+        </net>
+    </nic>
+
+</system>

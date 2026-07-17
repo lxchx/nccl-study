@@ -28,6 +28,225 @@
   .log-line.yt-trace.cpu .value { color: #79c0ff; }
   .log-line.yt-trace.gpu .value { color: #7ee787; }
   .log-line.yt-trace.rank .value { color: #ffa657; }
+  .log-line.yt-trace.src { color: #58a6ff; opacity: 0.7; }
+  .log-line.yt-trace.src .tag { color: #58a6ff; font-weight: 400; opacity: 0.6; }
+
+  /* ━━ Right: Topology ━━ */
+  #topo-panel { flex: 1; display: flex; flex-direction: column; background: #0d1117; }
+  #topo-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  #topo-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .btn-group { display: flex; gap: 5px; margin-left: auto; }
+  button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; font-size: 11px; font-family: inherit; cursor: pointer; transition: all 0.15s; }
+  button:hover { background: #30363d; border-color: #8b949e; }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  #topo-canvas { flex: 1; position: relative; overflow: hidden; }
+  #topo-canvas svg { width: 100%; height: 100%; }
+  .tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 11px; pointer-events: none; display: none; z-index: 100; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); line-height: 1.6; }
+  .tooltip.visible { display: block; }
+  #log-stream::-webkit-scrollbar { width: 5px; }
+  #log-stream::-webkit-scrollbar-track { background: transparent; }
+  #log-stream::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  #status-bar { padding: 5px 14px; border-top: 1px solid #30363d; background: #161b22; font-size: 10px; color: #8b949e; display: flex; gap: 14px; flex-shrink: 0; }
+  #status-bar .stat { display: flex; gap: 3px; }
+  #status-bar .stat-label { color: #484f58; }
+  #status-bar .stat-value { color: #58a6ff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="log-panel">
+    <div id="log-header">
+      <h2>📋 NCCL Log Stream</h2>
+      <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
+    </div>
+    <div id="log-stream"></div>
+  </div>
+
+  <div id="topo-panel">
+    <div id="topo-header">
+      <h2>🔌 Topology Graph</h2>
+      <div class="btn-group">
+        <button id="btn-reset" title="Reset (r)">↺</button>
+        <button id="btn-prev" title="Previous (←)">◀</button>
+        <button id="btn-next" class="primary" title="Next step (Space/→)">▶ Next</button>
+        <button id="btn-auto" title="Auto play (a)">▶▶</button>
+      </div>
+    </div>
+    <div id="topo-canvas">
+      <svg id="topo-svg"></svg>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+    <div id="status-bar">
+      <span class="stat"><span class="stat-label">Discovered:</span><span class="stat-value" id="stat-gpu">0 GPU</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-pci">0 PCI</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-cpu">0 NUMA</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-rank">0 Ranked</span></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1. EMBEDDED LOG DATA
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const RAW_LOG = `
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:59/0000:59:01.0/0000:5a:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:97/0000:97:01.0/0000:98:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:48/0000:48:01.0/0000:49:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:c7/0000:c7:01.0/0000:c8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:b7/0000:b7:01.0/0000:b8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:a7/0000:a7:01.0/0000:a8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:26/0000:26:01.0/0000:27:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:37/0000:37:01.0/0000:38:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:5a:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:98:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=1 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:5a:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:98:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:a8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:a8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:c8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:b8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=4
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=4 sm=120
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] gpu dev=4 sm=120 busid=0000:98:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:38:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=3
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=3 sm=120
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] gpu dev=3 sm=120 busid=0000:5a:00.0
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=5
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=5 sm=120
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] gpu dev=5 sm=120 busid=0000:a8:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=0 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:38:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=1
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=1 sm=120
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] gpu dev=1 sm=120 busid=0000:38:00.0
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:b8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:27:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=0 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:27:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=3 affinity=ffffff00,00000000,00000000,ffffff00,00000000,00000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] cpu numa=3 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=ffffff00,00000000,00000000,ffffff00,00000000,00000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:c8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=0
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=0 sm=120
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] gpu dev=0 sm=120 busid=0000:27:00.0
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=6
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=6 sm=120
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] gpu dev=6 sm=120 busid=0000:b8:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [RANK] gpu rank=1 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [RANK] gpu rank=4 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [RANK] gpu rank=5 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=7
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=7 sm=120
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] gpu dev=7 sm=120 busid=0000:c8:00.0
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [RANK] gpu rank=3 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [RANK] gpu rank=6 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:49:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=1 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:49:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=2
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=2 sm=120
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] gpu dev=2 sm=120 busid=0000:49:00.0
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [RANK] gpu rank=0 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [RANK] gpu rank=2 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [RANK] gpu rank=7 gdr=0 mlopart=-1
+`.split("\n");l>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT-TRACE Visualizer — NCCL Initialization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'JetBrains Mono', monospace;
+    background: #0d1117; color: #c9d1d9; height: 100vh; overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+
+  /* ━━ Left: Log Stream ━━ */
+  #log-panel { width: 42%; min-width: 400px; border-right: 1px solid #30363d; display: flex; flex-direction: column; background: #0d1117; }
+  #log-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  #log-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .step-info { font-size: 11px; color: #8b949e; }
+  .step-info .current { color: #58a6ff; font-weight: 600; }
+  #log-stream { flex: 1; overflow-y: auto; padding: 6px 0; font-size: 10.5px; line-height: 1.5; }
+  .log-line { padding: 1px 14px; white-space: pre; font-family: inherit; color: #484f58; transition: all 0.15s; }
+  .log-line.yt-trace { color: #7ee787; }
+  .log-line.current { background: #1f2937; border-left: 3px solid #ffd700; color: #f0f6fc; font-weight: 500; }
+  .log-line.current .tag { color: #ffd700; }
+  .log-line.yt-trace .tag { color: #00e676; font-weight: 700; }
+  .log-line.yt-trace.pci .value { color: #d2a8ff; }
+  .log-line.yt-trace.cpu .value { color: #79c0ff; }
+  .log-line.yt-trace.gpu .value { color: #7ee787; }
+  .log-line.yt-trace.rank .value { color: #ffa657; }
+  .log-line.yt-trace.src { color: #58a6ff; opacity: 0.7; }
+  .log-line.yt-trace.src .tag { color: #58a6ff; font-weight: 400; opacity: 0.6; }
 
   /* ━━ Right: Topology ━━ */
   #topo-panel { flex: 1; display: flex; flex-direction: column; background: #0d1117; }
@@ -181,6 +400,8 @@ function parseYTTrace(line) {
     else if (data.busid !== undefined) type = 'pci';
   } else if (phase === 'RANK') {
     type = 'rank';
+  } else if (phase === 'SRC') {
+    type = 'src';
   }
   return { rank, phase, type, data, raw: line };
 }
@@ -358,7 +579,7 @@ let currentStep = -1, ytIdx = [], parsedLines = [], autoInterval = null, autoPla
 
 function initData() {
   ytIdx = [];
-  parsedLines = RAW_LOG.map((l, i) => { const p = parseYTTrace(l); if (p) ytIdx.push(i); return { raw: l, parsed: p }; });
+  parsedLines = RAW_LOG.map((l, i) => { const p = parseYTTrace(l); if (p && p.type !== 'src') ytIdx.push(i); return { raw: l, parsed: p }; });
   document.getElementById('step-total').textContent = ytIdx.length;
 }
 
@@ -370,7 +591,7 @@ function renderLog() {
     const el = document.createElement('div');
     el.className = 'log-line';
     if (l.parsed) {
-      el.className += ' yt-trace ' + l.parsed.type;
+      el.className += ' yt-trace ' + (l.parsed.type === 'src' ? 'src' : l.parsed.type);
       el.innerHTML = l.raw.replace('[YT-TRACE]', '<span class="tag">[YT-TRACE]</span>');
     } else {
       el.textContent = l.raw;

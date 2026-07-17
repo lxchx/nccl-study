@@ -1806,6 +1806,11 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
     NCCLCHECKGOTO(xmlSetAttrInt(node, "rank", comm->rank), ret, fail);
     NCCLCHECKGOTO(xmlInitAttrInt(node, "gdr", comm->peerInfo[comm->rank].gdrSupport), ret, fail);
     NCCLCHECKGOTO(xmlSetAttrInt(node, "mlopart", comm->peerInfo[comm->rank].mloPart), ret, fail);
+    {
+      int gdrVal = 0;
+      xmlGetAttrInt(node, "gdr", &gdrVal);
+      YT_TRACE(NCCL_GRAPH, "[RANK] gpu rank=%d gdr=%d mlopart=%d", comm->rank, gdrVal, comm->peerInfo[comm->rank].mloPart);
+    }
   }
 
   // Auto-detect NICs if needed, net/gin/collnet share the same xml/graph nodes.

@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT-TRACE Visualizer — NCCL Initialization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'JetBrains Mono', monospace;
+    background: #0d1117;
+    color: #c9d1d9;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #app {
+    display: flex;
+    height: 100vh;
+  }
+
+  /* ━━ Left Panel: Log Stream ━━ */
+  #log-panel {
+    width: 45%;
+    min-width: 420px;
+    border-right: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+    background: #0d1117;
+  }
+
+  #log-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  #log-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #58a6ff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .step-info {
+    font-size: 12px;
+    color: #8b949e;
+  }
+
+  .step-info .current { color: #58a6ff; font-weight: 600; }
+
+  #log-stream {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .log-line {
+    padding: 2px 16px;
+    white-space: pre;
+    font-family: inherit;
+    color: #484f58;
+    transition: background 0.15s;
+  }
+
+  .log-line.yt-trace {
+    color: #7ee787;
+  }
+
+  .log-line.current {
+    background: #1f2937;
+    border-left: 3px solid #ffd700;
+    color: #f0f6fc;
+    font-weight: 500;
+  }
+
+  .log-line.current .tag { color: #ffd700; }
+
+  .log-line.yt-trace .tag {
+    color: #00e676;
+    font-weight: 700;
+  }
+
+  .log-line.yt-trace.pci .value { color: #d2a8ff; }
+  .log-line.yt-trace.cpu .value { color: #79c0ff; }
+  .log-line.yt-trace.gpu .value { color: #7ee787; }
+  .log-line.yt-trace.nic .value { color: #56d4dd; }
+
+  /* ━━ Right Panel: Topology ━━ */
+  #topo-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #0d1117;
+  }
+
+  #topo-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  #topo-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #58a6ff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-group {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  button {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  button:hover { background: #30363d; border-color: #8b949e; }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+
+  #topo-canvas {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  #topo-canvas svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .topo-legend {
+    font-size: 10px;
+    fill: #8b949e;
+  }
+
+  /* ━━ Tooltip ━━ */
+  .tooltip {
+    position: absolute;
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    max-width: 300px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+
+  .tooltip.visible { display: block; }
+
+  /* Scrollbar */
+  #log-stream::-webkit-scrollbar { width: 6px; }
+  #log-stream::-webkit-scrollbar-track { background: transparent; }
+  #log-stream::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+  /* Phase badges */
+  .phase-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    background: #21262d;
+    color: #8b949e;
+  }
+  .phase-badge.scan { background: #0e4429; color: #7ee787; }
+  .phase-badge.pci { background: #2a1a4e; color: #d2a8ff; }
+  .phase-badge.cpu { background: #0a3069; color: #79c0ff; }
+  .phase-badge.gpu { background: #0e4429; color: #7ee787; }
+  .phase-badge.nic { background: #045158; color: #56d4dd; }
+
+  /* Status bar */
+  #status-bar {
+    padding: 6px 16px;
+    border-top: 1px solid #30363d;
+    background: #161b22;
+    font-size: 11px;
+    color: #8b949e;
+    display: flex;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  #status-bar .stat { display: flex; gap: 4px; }
+  #status-bar .stat-label { color: #484f58; }
+  #status-bar .stat-value { color: #58a6ff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Left: Log Panel -->
+  <div id="log-panel">
+    <div id="log-header">
+      <h2>📋 NCCL Log Stream</h2>
+      <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
+    </div>
+    <div id="log-stream"></div>
+  </div>
+
+  <!-- Right: Topology Panel -->
+  <div id="topo-panel">
+    <div id="topo-header">
+      <h2>🔌 Topology Graph</h2>
+      <div class="btn-group">
+        <button id="btn-reset" title="Reset">↺</button>
+        <button id="btn-prev" title="Previous step">◀</button>
+        <button id="btn-next" class="primary" title="Next YT-TRACE line">▶ Next</button>
+        <button id="btn-auto" title="Auto play">▶▶</button>
+      </div>
+    </div>
+    <div id="topo-canvas">
+      <svg id="topo-svg"></svg>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+    <div id="status-bar">
+      <span class="stat"><span class="stat-label">Discovered:</span><span class="stat-value" id="stat-gpu">0 GPU</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-pci">0 PCI</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-cpu">0 NUMA</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-nic">0 NIC</span></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1. EMBEDDED LOG DATA (from 5090 YT-TRACE run)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const RAW_LOG = `jscs-backuppool-5090test-091606:1404856:1405189 [0] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:27:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405193 [4] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:98:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405196 [7] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:c8:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405190 [1] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:38:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405194 [5] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:a8:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405195 [6] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:b8:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405191 [2] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:49:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405192 [3] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:5a:00.0 class=0x03
+jscs-backuppool-5090test-091606:1404856:1405192 [3] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1
+jscs-backuppool-5090test-091606:1404856:1405189 [0] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0
+jscs-backuppool-5090test-091606:1404856:1405196 [7] NCCL INFO [YT-TRACE] [SCAN] cpu numa=3
+jscs-backuppool-5090test-091606:1404856:1405192 [3] NCCL INFO [YT-TRACE] [SCAN] gpu dev=3 sm=120 busid=0000:5a:00.0
+jscs-backuppool-5090test-091606:1404856:1405190 [1] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0
+jscs-backuppool-5090test-091606:1404856:1405194 [5] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2
+jscs-backuppool-5090test-091606:1404856:1405196 [7] NCCL INFO [YT-TRACE] [SCAN] gpu dev=7 sm=120 busid=0000:c8:00.0
+jscs-backuppool-5090test-091606:1404856:1405194 [5] NCCL INFO [YT-TRACE] [SCAN] gpu dev=5 sm=120 busid=0000:a8:00.0
+jscs-backuppool-5090test-091606:1404856:1405189 [0] NCCL INFO [YT-TRACE] [SCAN] gpu dev=0 sm=120 busid=0000:27:00.0
+jscs-backuppool-5090test-091606:1404856:1405195 [6] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2
+jscs-backuppool-5090test-091606:1404856:1405195 [6] NCCL INFO [YT-TRACE] [SCAN] gpu dev=6 sm=120 busid=0000:b8:00.0
+jscs-backuppool-5090test-091606:1404856:1405190 [1] NCCL INFO [YT-TRACE] [SCAN] gpu dev=1 sm=120 busid=0000:38:00.0
+jscs-backuppool-5090test-091606:1404856:1405191 [2] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1
+jscs-backuppool-5090test-091606:1404856:1405191 [2] NCCL INFO [YT-TRACE] [SCAN] gpu dev=2 sm=120 busid=0000:49:00.0
+jscs-backuppool-5090test-091606:1404856:1405193 [4] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2
+jscs-backuppool-5090test-091606:1404856:1405193 [4] NCCL INFO [YT-TRACE] [SCAN] gpu dev=4 sm=120 busid=0000:98:00.0`.split('\n');
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 2. DATA MODEL
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const topology = {
+  // id → node
+  nodes: new Map(),
+  edges: [],
+
+  addNode(id, type, label, extra = {}) {
+    if (this.nodes.has(id)) return this.nodes.get(id);
+    const node = { id, type, label, extra, discovered: false, x: 0, y: 0 };
+    this.nodes.set(id, node);
+    return node;
+  },
+
+  addEdge(fromId, toId, label = '') {
+    this.edges.push({ from: fromId, to: toId, label, discovered: false });
+  },
+
+  discoverNode(id) {
+    const n = this.nodes.get(id);
+    if (n) n.discovered = true;
+  },
+
+  markEdgeDiscovered(fromId, toId) {
+    this.edges.forEach(e => {
+      if ((e.from === fromId && e.to === toId) || (e.from === toId && e.to === fromId)) {
+        e.discovered = true;
+      }
+    });
+  }
+};
+
+// Pre-populate known topology from log + XML
+// (We'll add nodes as they're discovered during playback)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 3. YT-TRACE PARSER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function parseYTTrace(line) {
+  // Format: host:pid:tid [rank] NCCL INFO [YT-TRACE] [SCAN] key=value key=value...
+  const match = line.match(/\[(\d+)\].*?\[YT-TRACE\]\s+\[(\w+)\]\s+(.+)/);
+  if (!match) return null;
+  const rank = parseInt(match[1]);
+  const phase = match[2];
+  const dataStr = match[3];
+  
+  // Parse key=value pairs
+  const data = {};
+  dataStr.replace(/(\w+)=([^\s]+)/g, (_, k, v) => { data[k] = v; return ''; });
+  
+  // Infer type from phase/keys
+  let type = phase.toLowerCase();
+  if (type === 'scan') {
+    if (data.gpu !== undefined) type = 'gpu';
+    else if (data.numa !== undefined) type = 'cpu';
+    else if (data.busid !== undefined) type = 'pci';
+    else if (data.net !== undefined) type = 'nic';
+  }
+
+  return { rank, phase: phase, type, data, raw: line };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 4. TOPOLOGY LAYOUT COMPUTATION
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Known NUMA → GPU mapping from XML topo
+const NUMA_MAP = {
+  0: { gpus: [0, 1], pcis: ['0000:27:00.0', '0000:38:00.0'] },
+  1: { gpus: [2, 3], pcis: ['0000:49:00.0', '0000:5a:00.0'] },
+  2: { gpus: [4, 5, 6], pcis: ['0000:98:00.0', '0000:a8:00.0', '0000:b8:00.0'] },
+  3: { gpus: [7], pcis: ['0000:c8:00.0'] }
+};
+
+// Reverse: busid → numa
+const BUSID_NUMA = {};
+Object.entries(NUMA_MAP).forEach(([numa, info]) => {
+  info.pcis.forEach(busid => { BUSID_NUMA[busid] = parseInt(numa); });
+});
+
+const NODE_W = 80;
+const NODE_H = 36;
+const LAYER_GAP = 60;
+const NODE_GAP = 12;
+
+function computeLayout() {
+  const width = document.getElementById('topo-canvas').clientWidth || 900;
+  
+  // Layer 0: NUMA (top)
+  // Layer 1: PCI (middle)  
+  // Layer 2: GPU (bottom)
+  // Side: NIC
+  
+  const layers = [
+    { type: 'cpu', y: 40 },
+    { type: 'pci', y: 40 + LAYER_GAP + NODE_H },
+    { type: 'gpu', y: 40 + 2 * (LAYER_GAP + NODE_H) },
+    { type: 'nic', y: 40 + LAYER_GAP + NODE_H }
+  ];
+
+  const numaOrder = [0, 1, 2, 3];
+  const totalUnits = numaOrder.reduce((s, n) => s + NUMA_MAP[n].gpus.length, 0);
+  const totalPcis = numaOrder.reduce((s, n) => s + NUMA_MAP[n].pcis.length, 0);
+  
+  // Compute columns per NUMA
+  const numaCols = {};
+  let col = 0;
+  numaOrder.forEach(numa => {
+    const nGpus = NUMA_MAP[numa].gpus.length;
+    numaCols[numa] = { startCol: col, width: nGpus };
+    col += nGpus + 0.5; // spacing between NUMA groups
+  });
+  const totalCols = col;
+
+  // Compute column widths
+  const paddedWidth = width - 80;
+  const colWidth = Math.min(140, paddedWidth / totalCols);
+
+  // Place NUMA nodes
+  const layer0 = layers[0];
+  numaOrder.forEach(numa => {
+    const info = numaCols[numa];
+    const cx = 40 + (info.startCol + info.width / 2) * colWidth;
+    const id = `numa-${numa}`;
+    const n = topology.nodes.get(id);
+    if (n) { n.x = cx; n.y = layer0.y; }
+  });
+
+  // Place PCI nodes
+  const layer1 = layers[1];
+  numaOrder.forEach(numa => {
+    const info = numaCols[numa];
+    const pcis = NUMA_MAP[numa].pcis;
+    pcis.forEach((busid, i) => {
+      const cx = 40 + (info.startCol + i) * colWidth;
+      const id = `pci-${busid}`;
+      const n = topology.nodes.get(id);
+      if (n) { n.x = cx; n.y = layer1.y; }
+    });
+  });
+
+  // Place GPU nodes
+  const layer2 = layers[2];
+  numaOrder.forEach(numa => {
+    const info = numaCols[numa];
+    const gpus = NUMA_MAP[numa].gpus;
+    gpus.forEach((dev, i) => {
+      const cx = 40 + (info.startCol + i) * colWidth;
+      const id = `gpu-${dev}`;
+      const n = topology.nodes.get(id);
+      if (n) { n.x = cx; n.y = layer2.y; }
+    });
+  });
+
+  // Place NIC (right side, between PCI and GPU)
+  const nicId = 'nic-bond0';
+  const nicN = topology.nodes.get(nicId);
+  if (nicN) {
+    nicN.x = width - 120;
+    nicN.y = 40 + (LAYER_GAP + NODE_H);
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 5. SVG RENDERER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const svg = document.getElementById('topo-svg');
+const tooltip = document.getElementById('tooltip');
+
+// SVG namespace
+const NS = 'http://www.w3.org/2000/svg';
+
+// Colors
+const COLORS = {
+  cpu: { fill: '#1a3a5c', stroke: '#58a6ff', text: '#79c0ff' },
+  pci: { fill: '#2a1a4e', stroke: '#bc8cff', text: '#d2a8ff' },
+  gpu: { fill: '#0e4429', stroke: '#3fb950', text: '#7ee787' },
+  nic: { fill: '#045158', stroke: '#56d4dd', text: '#56d4dd' },
+  edge: { discovered: '#3fb950', pending: '#21262d' },
+  glow: 'rgba(88,166,255,0.3)'
+};
+
+function createSvgEl(tag, attrs = {}) {
+  const el = document.createElementNS(NS, tag);
+  Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+  return el;
+}
+
+function renderTopology() {
+  // Clear
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  
+  const width = document.getElementById('topo-canvas').clientWidth || 900;
+  const height = document.getElementById('topo-canvas').clientHeight || 600;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  computeLayout();
+
+  // Defs for gradients, filters
+  const defs = createSvgEl('defs');
+  
+  // Glow filter
+  const filter = createSvgEl('filter', { id: 'glow', x: '-20%', y: '-20%', width: '140%', height: '140%' });
+  const blur = createSvgEl('feGaussianBlur', { stdDeviation: '3', result: 'blur' });
+  const merge = createSvgEl('feMerge');
+  const m1 = createSvgEl('feMergeNode', { in: 'blur' });
+  const m2 = createSvgEl('feMergeNode', { in: 'SourceGraphic' });
+  merge.appendChild(m1); merge.appendChild(m2);
+  filter.appendChild(blur); filter.appendChild(merge);
+  defs.appendChild(filter);
+
+  // Arrow marker for edges
+  const marker = createSvgEl('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: '10', refY: '5', markerWidth: '8', markerHeight: '8', orient: 'auto' });
+  const arrowPath = createSvgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: '#3fb950' });
+  marker.appendChild(arrowPath);
+  defs.appendChild(marker);
+  
+  svg.appendChild(defs);
+
+  // Edges
+  const edgeG = createSvgEl('g', { class: 'edges' });
+  topology.edges.forEach(e => {
+    const fromN = topology.nodes.get(e.from);
+    const toN = topology.nodes.get(e.to);
+    if (!fromN || !toN) return;
+
+    const line = createSvgEl('line', {
+      x1: fromN.x, y1: fromN.y + NODE_H/2,
+      x2: toN.x, y2: toN.y - NODE_H/2,
+      stroke: e.discovered ? '#3fb950' : '#21262d',
+      'stroke-width': e.discovered ? '2' : '1',
+      'stroke-dasharray': e.discovered ? 'none' : '4,4',
+      'marker-end': e.discovered ? 'url(#arrow)' : ''
+    });
+    edgeG.appendChild(line);
+
+    // Label (bandwidth etc)
+    if (e.label && e.discovered) {
+      const lbl = createSvgEl('text', {
+        x: (fromN.x + toN.x) / 2,
+        y: (fromN.y + toN.y) / 2 - 4,
+        'text-anchor': 'middle',
+        fill: '#8b949e',
+        'font-size': '9'
+      });
+      lbl.textContent = e.label;
+      edgeG.appendChild(lbl);
+    }
+  });
+  svg.appendChild(edgeG);
+
+  // Nodes
+  const nodeG = createSvgEl('g', { class: 'nodes' });
+  
+  const drawOrder = ['cpu', 'pci', 'nic', 'gpu'];
+  drawOrder.forEach(type => {
+    topology.nodes.forEach(n => {
+      if (n.type !== type) return;
+      drawNode(nodeG, n, width);
+    });
+  });
+
+  svg.appendChild(nodeG);
+}
+
+function drawNode(g, node, canvasWidth) {
+  const c = COLORS[node.type] || { fill: '#1c2128', stroke: '#30363d', text: '#8b949e' };
+  const opacity = node.discovered ? 1 : 0.08;
+  const glowFilter = node.discovered ? '' : '';
+
+  const grp = createSvgEl('g', {
+    transform: `translate(${node.x - NODE_W/2}, ${node.y - NODE_H/2})`,
+    opacity
+  });
+
+  let shape;
+  switch (node.type) {
+    case 'cpu':
+      shape = createSvgEl('rect', {
+        width: NODE_W, height: NODE_H, rx: 18, ry: 18,
+        fill: c.fill, stroke: node.discovered ? c.stroke : '#21262d',
+        'stroke-width': '2',
+        filter: node.discovered ? 'url(#glow)' : ''
+      });
+      break;
+    case 'pci':
+      shape = createSvgEl('rect', {
+        width: NODE_W, height: NODE_H, rx: 4, ry: 4,
+        fill: c.fill, stroke: node.discovered ? c.stroke : '#21262d',
+        'stroke-width': '2'
+      });
+      break;
+    case 'gpu':
+      shape = createSvgEl('rect', {
+        width: NODE_W, height: NODE_H, rx: 4, ry: 4,
+        fill: c.fill, stroke: node.discovered ? c.stroke : '#21262d',
+        'stroke-width': '2',
+        filter: node.discovered ? 'url(#glow)' : ''
+      });
+      break;
+    case 'nic':
+      shape = createSvgEl('rect', {
+        width: NODE_W, height: NODE_H, rx: 8, ry: 8,
+        fill: c.fill, stroke: node.discovered ? c.stroke : '#21262d',
+        'stroke-width': '2'
+      });
+      break;
+  }
+  grp.appendChild(shape);
+
+  // Label
+  const label = createSvgEl('text', {
+    x: NODE_W/2, y: NODE_H/2 + 4,
+    'text-anchor': 'middle',
+    fill: node.discovered ? c.text : '#484f58',
+    'font-size': '10',
+    'font-weight': '500'
+  });
+  label.textContent = node.label;
+  grp.appendChild(label);
+
+  // Subtitle (smaller, below label)
+  if (node.extra.subtitle && node.discovered) {
+    const sub = createSvgEl('text', {
+      x: NODE_W/2, y: NODE_H/2 + 16,
+      'text-anchor': 'middle',
+      fill: '#8b949e',
+      'font-size': '8'
+    });
+    sub.textContent = node.extra.subtitle;
+    grp.appendChild(sub);
+  }
+
+  // Click/tooltip
+  shape.style.cursor = 'pointer';
+  grp.addEventListener('mouseenter', (e) => {
+    const rect = svg.getBoundingClientRect();
+    tooltip.innerHTML = `<b>${node.type.toUpperCase()}</b> ${node.label}<br>`;
+    if (node.extra.subtitle) tooltip.innerHTML += `${node.extra.subtitle}<br>`;
+    if (node.extra.detail) tooltip.innerHTML += node.extra.detail;
+    tooltip.className = 'tooltip visible';
+    tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
+    tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+  });
+  grp.addEventListener('mousemove', (e) => {
+    const rect = svg.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
+    tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+  });
+  grp.addEventListener('mouseleave', () => { tooltip.className = 'tooltip'; });
+
+  // Pending animation for undiscovered high-value nodes (GPU/NUMA)
+  if (!node.discovered && (node.type === 'gpu' || node.type === 'cpu')) {
+    // Placeholder pulse ring
+    const pulse = createSvgEl('circle', {
+      cx: NODE_W/2, cy: NODE_H/2, r: NODE_H/2 + 2,
+      fill: 'none', stroke: '#30363d', 'stroke-width': '1',
+      'stroke-dasharray': '2,2'
+    });
+    grp.appendChild(pulse);
+  }
+
+  g.appendChild(grp);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 6. PLAYBACK ENGINE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+let currentStep = -1; // -1 = nothing shown
+let ytTraceLines = []; // indices into parsedLines for YT-TRACE only
+let parsedLines = [];
+let autoPlayInterval = null;
+let autoPlaying = false;
+
+function initData() {
+  // Parse all YT-TRACE lines
+  ytTraceLines = [];
+  parsedLines = RAW_LOG.map((line, idx) => {
+    const parsed = parseYTTrace(line);
+    if (parsed) ytTraceLines.push(idx);
+    return { raw: line, parsed };
+  });
+  
+  document.getElementById('step-total').textContent = ytTraceLines.length;
+}
+
+function buildLogLineHTML(idx) {
+  const line = parsedLines[idx];
+  const parsed = line.parsed;
+  
+  let cls = 'log-line';
+  if (parsed) cls += ' yt-trace ' + parsed.type;
+  if (idx === currentStep) cls += ' current';
+  
+  let html = `<div class="${cls}" data-idx="${idx}">`;
+  
+  if (parsed) {
+    // Highlight the YT-TRACE tag
+    html += line.raw.replace(
+      /\[YT-TRACE\]/,
+      '<span class="tag">[YT-TRACE]</span>'
+    );
+  } else {
+    html += line.raw;
+  }
+  
+  html += '</div>';
+  return html;
+}
+
+function renderLog(highlightIdx = -1) {
+  const stream = document.getElementById('log-stream');
+  stream.innerHTML = '';
+  
+  parsedLines.forEach((line, idx) => {
+    // Show only up to the current visible range
+    if (idx > currentStep + 50 && currentStep >= 0) return;
+    
+    const el = document.createElement('div');
+    el.className = 'log-line';
+    const parsed = line.parsed;
+    
+    if (parsed) {
+      el.className += ' yt-trace ' + parsed.type;
+      // Format raw with highlighted tag
+      const parts = line.raw.split('[YT-TRACE]');
+      el.innerHTML = parts.join('<span class="tag">[YT-TRACE]</span>');
+    } else {
+      el.textContent = line.raw;
+      el.style.color = '#484f58';
+    }
+    
+    if (idx === currentStep) {
+      el.className += ' current';
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    
+    stream.appendChild(el);
+  });
+}
+
+function advanceToStep(stepIdx) {
+  if (stepIdx < -1) stepIdx = -1;
+  if (stepIdx >= ytTraceLines.length) stepIdx = ytTraceLines.length - 1;
+  
+  currentStep = stepIdx;
+  
+  // Reset topology to undiscovered
+  topology.nodes.forEach(n => { n.discovered = false; });
+  topology.edges.forEach(e => { e.discovered = false; });
+  
+  // Discover nodes up to current step
+  for (let i = 0; i <= stepIdx && i < ytTraceLines.length; i++) {
+    const lineIdx = ytTraceLines[i];
+    const parsed = parsedLines[lineIdx].parsed;
+    if (!parsed) continue;
+    processTrace(parsed);
+  }
+  
+  renderLog(currentStep);
+  renderTopology();
+  updateStats();
+  
+  document.getElementById('step-num').textContent = currentStep + 1;
+  document.getElementById('btn-prev').disabled = (currentStep < 0);
+  document.getElementById('btn-next').disabled = (currentStep >= ytTraceLines.length - 1);
+}
+
+function processTrace(parsed) {
+  const { type, data } = parsed;
+  
+  switch (type) {
+    case 'pci': {
+      const busid = data.busid;
+      const id = `pci-${busid}`;
+      const node = topology.addNode(id, 'pci', busid.slice(-11), {
+        subtitle: 'PCIe',
+        detail: `busid: ${busid}<br>class: ${data.class}`
+      });
+      topology.discoverNode(id);
+      
+      // Link to NUMA if known
+      const numaId = BUSID_NUMA[busid];
+      if (numaId !== undefined) {
+        const nid = `numa-${numaId}`;
+        const existingNuma = topology.nodes.get(nid);
+        if (existingNuma) {
+          topology.addEdge(nid, id, 'PCIe');
+          topology.markEdgeDiscovered(nid, id);
+        }
+      }
+      break;
+    }
+    
+    case 'cpu': {
+      const numa = data.numa;
+      const id = `numa-${numa}`;
+      const node = topology.addNode(id, 'cpu', `NUMA ${numa}`, {
+        subtitle: 'CPU Socket',
+        detail: `numa: ${numa}`
+      });
+      topology.discoverNode(id);
+      break;
+    }
+    
+    case 'gpu': {
+      const dev = data.dev;
+      const busid = data.busid;
+      const id = `gpu-${dev}`;
+      const gpuNode = topology.addNode(id, 'gpu', `GPU ${dev}`, {
+        subtitle: `SM ${data.sm}`,
+        detail: `device: ${dev}<br>SM: ${data.sm}<br>busid: ${busid}`
+      });
+      topology.discoverNode(id);
+      
+      // Link to PCI bus
+      const pciId = `pci-${busid}`;
+      const pciNode = topology.nodes.get(pciId);
+      if (pciNode && pciNode.discovered) {
+        topology.addEdge(pciId, id, 'NVLink?');
+        topology.markEdgeDiscovered(pciId, id);
+      }
+      break;
+    }
+    
+    case 'nic': {
+      const net = data.net || data.name;
+      const id = `nic-${net}`;
+      topology.addNode(id, 'nic', net, {
+        subtitle: `${data.speed || '?'} Mbps`,
+        detail: `name: ${net}<br>speed: ${data.speed || '?'}`
+      });
+      topology.discoverNode(id);
+      break;
+    }
+  }
+}
+
+function updateStats() {
+  let gpu = 0, pci = 0, cpu = 0, nic = 0;
+  topology.nodes.forEach(n => {
+    if (!n.discovered) return;
+    if (n.type === 'gpu') gpu++;
+    else if (n.type === 'pci') pci++;
+    else if (n.type === 'cpu') cpu++;
+    else if (n.type === 'nic') nic++;
+  });
+  document.getElementById('stat-gpu').textContent = gpu + ' GPU';
+  document.getElementById('stat-pci').textContent = pci + ' PCI';
+  document.getElementById('stat-cpu').textContent = cpu + ' NUMA';
+  document.getElementById('stat-nic').textContent = nic + ' NIC';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 7. CONTROLS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+document.getElementById('btn-next').addEventListener('click', () => {
+  advanceToStep(currentStep + 1);
+});
+
+document.getElementById('btn-prev').addEventListener('click', () => {
+  advanceToStep(currentStep - 1);
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (autoPlaying) toggleAutoPlay();
+  advanceToStep(-1);
+});
+
+document.getElementById('btn-auto').addEventListener('click', toggleAutoPlay);
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); advanceToStep(currentStep + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); advanceToStep(currentStep - 1); }
+  if (e.key === 'r') { document.getElementById('btn-reset').click(); }
+  if (e.key === 'a') { toggleAutoPlay(); }
+});
+
+function toggleAutoPlay() {
+  autoPlaying = !autoPlaying;
+  document.getElementById('btn-auto').textContent = autoPlaying ? '⏹ Stop' : '▶▶';
+  document.getElementById('btn-auto').className = autoPlaying ? 'primary' : '';
+  
+  if (autoPlaying) {
+    autoPlayInterval = setInterval(() => {
+      if (currentStep >= ytTraceLines.length - 1) {
+        toggleAutoPlay();
+        return;
+      }
+      advanceToStep(currentStep + 1);
+    }, 800);
+  } else {
+    clearInterval(autoPlayInterval);
+    autoPlayInterval = null;
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 8. INIT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function init() {
+  initData();
+  
+  // Pre-populate NUMA nodes from known topology
+  Object.entries(NUMA_MAP).forEach(([numa, info]) => {
+    topology.addNode(`numa-${numa}`, 'cpu', `NUMA ${numa}`, { subtitle: 'CPU Socket', detail: `numa: ${numa}` });
+    info.pcis.forEach(busid => {
+      topology.addNode(`pci-${busid}`, 'pci', busid.slice(-11), { subtitle: 'PCIe', detail: `busid: ${busid}` });
+    });
+    info.gpus.forEach(dev => {
+      topology.addNode(`gpu-${dev}`, 'gpu', `GPU ${dev}`, { subtitle: 'SM ?', detail: `device: ${dev}` });
+    });
+  });
+  
+  advanceToStep(-1);
+  
+  // Handle resize
+  window.addEventListener('resize', () => {
+    if (!autoPlaying) renderTopology();
+  });
+}
+
+init();
+</script>
+</body>
+</html>

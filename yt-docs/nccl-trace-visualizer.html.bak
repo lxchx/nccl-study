@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT-TRACE Visualizer — NCCL Initialization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'JetBrains Mono', monospace;
+    background: #0d1117; color: #c9d1d9; height: 100vh; overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+
+  /* ━━ Left: Log Stream ━━ */
+  #log-panel { width: 42%; min-width: 400px; border-right: 1px solid #30363d; display: flex; flex-direction: column; background: #0d1117; }
+  #log-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  #log-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .step-info { font-size: 11px; color: #8b949e; }
+  .step-info .current { color: #58a6ff; font-weight: 600; }
+  #log-stream { flex: 1; overflow-y: auto; padding: 6px 0; font-size: 10.5px; line-height: 1.5; }
+  .log-line { padding: 1px 14px; white-space: pre; font-family: inherit; color: #484f58; transition: all 0.15s; }
+  .log-line.yt-trace { color: #7ee787; }
+  .log-line.current { background: #1f2937; border-left: 3px solid #ffd700; color: #f0f6fc; font-weight: 500; }
+  .log-line.current .tag { color: #ffd700; }
+  .log-line.yt-trace .tag { color: #00e676; font-weight: 700; }
+  .log-line.yt-trace.pci .value { color: #d2a8ff; }
+  .log-line.yt-trace.cpu .value { color: #79c0ff; }
+  .log-line.yt-trace.gpu .value { color: #7ee787; }
+  .log-line.yt-trace.rank .value { color: #ffa657; }
+  .log-line.yt-trace.src { color: #58a6ff; opacity: 0.7; }
+  .log-line.yt-trace.src .tag { color: #58a6ff; font-weight: 400; opacity: 0.6; }
+
+  /* ━━ Right: Topology ━━ */
+  #topo-panel { flex: 1; display: flex; flex-direction: column; background: #0d1117; }
+  #topo-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  #topo-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .btn-group { display: flex; gap: 5px; margin-left: auto; }
+  button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; font-size: 11px; font-family: inherit; cursor: pointer; transition: all 0.15s; }
+  button:hover { background: #30363d; border-color: #8b949e; }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  #topo-canvas { flex: 1; position: relative; overflow: hidden; }
+  #topo-canvas svg { width: 100%; height: 100%; }
+  .tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 11px; pointer-events: none; display: none; z-index: 100; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); line-height: 1.6; }
+  .tooltip.visible { display: block; }
+  #log-stream::-webkit-scrollbar { width: 5px; }
+  #log-stream::-webkit-scrollbar-track { background: transparent; }
+  #log-stream::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  #status-bar { padding: 5px 14px; border-top: 1px solid #30363d; background: #161b22; font-size: 10px; color: #8b949e; display: flex; gap: 14px; flex-shrink: 0; }
+  #status-bar .stat { display: flex; gap: 3px; }
+  #status-bar .stat-label { color: #484f58; }
+  #status-bar .stat-value { color: #58a6ff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="log-panel">
+    <div id="log-header">
+      <h2>📋 NCCL Log Stream</h2>
+      <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
+    </div>
+    <div id="log-stream"></div>
+  </div>
+
+  <div id="topo-panel">
+    <div id="topo-header">
+      <h2>🔌 Topology Graph</h2>
+      <div class="btn-group">
+        <button id="btn-reset" title="Reset (r)">↺</button>
+        <button id="btn-prev" title="Previous (←)">◀</button>
+        <button id="btn-next" class="primary" title="Next step (Space/→)">▶ Next</button>
+        <button id="btn-auto" title="Auto play (a)">▶▶</button>
+      </div>
+    </div>
+    <div id="topo-canvas">
+      <svg id="topo-svg"></svg>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+    <div id="status-bar">
+      <span class="stat"><span class="stat-label">Discovered:</span><span class="stat-value" id="stat-gpu">0 GPU</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-pci">0 PCI</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-cpu">0 NUMA</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-rank">0 Ranked</span></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1. EMBEDDED LOG DATA
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const RAW_LOG = `
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:59/0000:59:01.0/0000:5a:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:97/0000:97:01.0/0000:98:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:48/0000:48:01.0/0000:49:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:c7/0000:c7:01.0/0000:c8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:b7/0000:b7:01.0/0000:b8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:a7/0000:a7:01.0/0000:a8:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:26/0000:26:01.0/0000:27:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_sysfs path=/sys/devices/pci0000:37/0000:37:01.0/0000:38:00.0/class class=0x030000
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:5a:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:98:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=1 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:5a:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml device=0x2b85
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:98:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:a8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:a8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:c8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:b8:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=4
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=4 sm=120
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [SCAN] gpu dev=4 sm=120 busid=0000:98:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:38:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=3
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=3 sm=120
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [SCAN] gpu dev=3 sm=120 busid=0000:5a:00.0
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=5
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=5 sm=120
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [SCAN] gpu dev=5 sm=120 busid=0000:a8:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=0 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:38:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=1
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=1 sm=120
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_vendor=0x10de
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [SCAN] gpu dev=1 sm=120 busid=0000:38:00.0
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=2 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] cpu numa=2 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=000000ff,ffff0000,00000000,000000ff,ffff0000,00000000
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:b8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:27:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=0 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] cpu numa=0 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,00000000,00ffffff,00000000,00000000,00ffffff
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:27:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_nvml subsystem_device=0x5309
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=3 affinity=ffffff00,00000000,00000000,ffffff00,00000000,00000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] cpu numa=3 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=ffffff00,00000000,00000000,ffffff00,00000000,00000000
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:c8:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=0
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=0 sm=120
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [SCAN] gpu dev=0 sm=120 busid=0000:27:00.0
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=6
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=6 sm=120
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [SCAN] gpu dev=6 sm=120 busid=0000:b8:00.0
+jscs-backuppool-5090test-091606:2490290:2490634 [1] NCCL INFO [YT-TRACE] [RANK] gpu rank=1 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490637 [4] NCCL INFO [YT-TRACE] [RANK] gpu rank=4 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490638 [5] NCCL INFO [YT-TRACE] [RANK] gpu rank=5 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=7
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=7 sm=120
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [SCAN] gpu dev=7 sm=120 busid=0000:c8:00.0
+jscs-backuppool-5090test-091606:2490290:2490636 [3] NCCL INFO [YT-TRACE] [RANK] gpu rank=3 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490639 [6] NCCL INFO [YT-TRACE] [RANK] gpu rank=6 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] pci_link_speed nvml busid=0000:49:00.0 link_speed=32.0 GT/s PCIe
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_affinity numa=1 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid vendor=GenuineIntel
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] cpu_cpuid family=6 model=207
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] cpu numa=1 arch=x86_64 vendor=GenuineIntel family=6 model=207 affinity=00000000,0000ffff,ff000000,00000000,0000ffff,ff000000
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] pci busid=0000:49:00.0 class=0x030000 vendor=0x10de device=0x2b85 subven=0x10de subdev=0x5309 link=32.0 GT/s PCIe width=16
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] gpu_dev nvml dev=2
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SRC] gpu_sm nvml dev=2 sm=120
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [SCAN] gpu dev=2 sm=120 busid=0000:49:00.0
+jscs-backuppool-5090test-091606:2490290:2490633 [0] NCCL INFO [YT-TRACE] [RANK] gpu rank=0 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490635 [2] NCCL INFO [YT-TRACE] [RANK] gpu rank=2 gdr=0 mlopart=-1
+jscs-backuppool-5090test-091606:2490290:2490640 [7] NCCL INFO [YT-TRACE] [RANK] gpu rank=7 gdr=0 mlopart=-1
+`.split("\n");l>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT-TRACE Visualizer — NCCL Initialization</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'JetBrains Mono', monospace;
+    background: #0d1117; color: #c9d1d9; height: 100vh; overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+
+  /* ━━ Left: Log Stream ━━ */
+  #log-panel { width: 42%; min-width: 400px; border-right: 1px solid #30363d; display: flex; flex-direction: column; background: #0d1117; }
+  #log-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  #log-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .step-info { font-size: 11px; color: #8b949e; }
+  .step-info .current { color: #58a6ff; font-weight: 600; }
+  #log-stream { flex: 1; overflow-y: auto; padding: 6px 0; font-size: 10.5px; line-height: 1.5; }
+  .log-line { padding: 1px 14px; white-space: pre; font-family: inherit; color: #484f58; transition: all 0.15s; }
+  .log-line.yt-trace { color: #7ee787; }
+  .log-line.current { background: #1f2937; border-left: 3px solid #ffd700; color: #f0f6fc; font-weight: 500; }
+  .log-line.current .tag { color: #ffd700; }
+  .log-line.yt-trace .tag { color: #00e676; font-weight: 700; }
+  .log-line.yt-trace.pci .value { color: #d2a8ff; }
+  .log-line.yt-trace.cpu .value { color: #79c0ff; }
+  .log-line.yt-trace.gpu .value { color: #7ee787; }
+  .log-line.yt-trace.rank .value { color: #ffa657; }
+  .log-line.yt-trace.src { color: #58a6ff; opacity: 0.7; }
+  .log-line.yt-trace.src .tag { color: #58a6ff; font-weight: 400; opacity: 0.6; }
+
+  /* ━━ Right: Topology ━━ */
+  #topo-panel { flex: 1; display: flex; flex-direction: column; background: #0d1117; }
+  #topo-header { padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  #topo-header h2 { font-size: 12px; font-weight: 600; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; }
+  .btn-group { display: flex; gap: 5px; margin-left: auto; }
+  button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 6px; font-size: 11px; font-family: inherit; cursor: pointer; transition: all 0.15s; }
+  button:hover { background: #30363d; border-color: #8b949e; }
+  button:active { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  #topo-canvas { flex: 1; position: relative; overflow: hidden; }
+  #topo-canvas svg { width: 100%; height: 100%; }
+  .tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 11px; pointer-events: none; display: none; z-index: 100; max-width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); line-height: 1.6; }
+  .tooltip.visible { display: block; }
+  #log-stream::-webkit-scrollbar { width: 5px; }
+  #log-stream::-webkit-scrollbar-track { background: transparent; }
+  #log-stream::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  #status-bar { padding: 5px 14px; border-top: 1px solid #30363d; background: #161b22; font-size: 10px; color: #8b949e; display: flex; gap: 14px; flex-shrink: 0; }
+  #status-bar .stat { display: flex; gap: 3px; }
+  #status-bar .stat-label { color: #484f58; }
+  #status-bar .stat-value { color: #58a6ff; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="log-panel">
+    <div id="log-header">
+      <h2>📋 NCCL Log Stream</h2>
+      <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
+    </div>
+    <div id="log-stream"></div>
+  </div>
+
+  <div id="topo-panel">
+    <div id="topo-header">
+      <h2>🔌 Topology Graph</h2>
+      <div class="btn-group">
+        <button id="btn-reset" title="Reset (r)">↺</button>
+        <button id="btn-prev" title="Previous (←)">◀</button>
+        <button id="btn-next" class="primary" title="Next step (Space/→)">▶ Next</button>
+        <button id="btn-auto" title="Auto play (a)">▶▶</button>
+      </div>
+    </div>
+    <div id="topo-canvas">
+      <svg id="topo-svg"></svg>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+    <div id="status-bar">
+      <span class="stat"><span class="stat-label">Discovered:</span><span class="stat-value" id="stat-gpu">0 GPU</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-pci">0 PCI</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-cpu">0 NUMA</span></span>
+      <span class="stat"><span class="stat-label">·</span><span class="stat-value" id="stat-rank">0 Ranked</span></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1. EMBEDDED LOG DATA
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 2. DATA MODEL
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const topo = {
+  nodes: new Map(), edges: [],
+  addNode(id, type, label, extra = {}) {
+    if (this.nodes.has(id)) return this.nodes.get(id);
+    const n = { id, type, label, extra, discovered: false, x: 0, y: 0 };
+    this.nodes.set(id, n); return n;
+  },
+  addEdge(fromId, toId, label = '') { this.edges.push({ from: fromId, to: toId, label, discovered: false }); },
+  discoverNode(id) { const n = this.nodes.get(id); if (n) n.discovered = true; },
+  markEdgeDiscovered(f, t) { this.edges.forEach(e => { if ((e.from===f&&e.to===t)||(e.from===t&&e.to===f)) e.discovered=true; }); }
+};
+
+const NUMA_MAP = {
+  0: { gpus: [0, 1], pcis: ['0000:27:00.0', '0000:38:00.0'] },
+  1: { gpus: [2, 3], pcis: ['0000:49:00.0', '0000:5a:00.0'] },
+  2: { gpus: [4, 5, 6], pcis: ['0000:98:00.0', '0000:a8:00.0', '0000:b8:00.0'] },
+  3: { gpus: [7], pcis: ['0000:c8:00.0'] }
+};
+const BUSID_NUMA = {};
+Object.entries(NUMA_MAP).forEach(([n, v]) => v.pcis.forEach(b => { BUSID_NUMA[b] = parseInt(n); }));
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 3. YT-TRACE PARSER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function parseYTTrace(line) {
+  const m = line.match(/\[(\d+)\].*?\[YT-TRACE\]\s+\[(\w+)\]\s+(.+)/);
+  if (!m) return null;
+  const rank = parseInt(m[1]), phase = m[2], dataStr = m[3];
+  
+  // Parse key=value (values may contain spaces: "32.0 GT/s PCIe")
+  const data = {};
+  // Strategy: split on known key names
+  const parts = dataStr.match(/(\w+)=(?:"([^"]*)"|(\S+(?:\s+\S+)*?))(?=\s+\w+=|$)/g);
+  if (parts) {
+    parts.forEach(p => {
+      const eq = p.indexOf('=');
+      const k = p.substring(0, eq), v = p.substring(eq + 1);
+      data[k] = v;
+    });
+  } else {
+    // fallback: simple key=value pairs
+    dataStr.replace(/(\w+)=([^\s]+)/g, (_, k, v) => { data[k] = v; return ''; });
+  }
+
+  let type = phase.toLowerCase();
+  if (phase === 'SCAN') {
+    if (data.gpu !== undefined) type = 'gpu';
+    else if (data.numa !== undefined) type = 'cpu';
+    else if (data.busid !== undefined) type = 'pci';
+  } else if (phase === 'RANK') {
+    type = 'rank';
+  } else if (phase === 'SRC') {
+    type = 'src';
+  }
+  return { rank, phase, type, data, raw: line };
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 4. LAYOUT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const NODE_W = 82, NODE_H = 36, LAYER_GAP = 60;
+
+function computeLayout() {
+  const w = document.getElementById('topo-canvas').clientWidth || 900;
+  const layers = [
+    { type: 'cpu', y: 35 },
+    { type: 'pci', y: 35 + LAYER_GAP + NODE_H },
+    { type: 'gpu', y: 35 + 2 * (LAYER_GAP + NODE_H) },
+  ];
+  const numaOrder = [0, 1, 2, 3];
+  const totalCols = numaOrder.reduce((s, n) => s + NUMA_MAP[n].gpus.length + 0.5, 0);
+  const colWidth = Math.min(140, (w - 60) / totalCols);
+
+  numaOrder.forEach(numa => {
+    const info = NUMA_MAP[numa];
+    let col = 0;
+    for (let i = 0; i < numa; i++) col += NUMA_MAP[i].gpus.length + 0.5;
+    
+    // NUMA
+    const n = topo.nodes.get(`numa-${numa}`);
+    if (n) { n.x = 30 + (col + info.gpus.length / 2) * colWidth; n.y = layers[0].y; }
+    
+    // PCI + GPU
+    info.pcis.forEach((busid, i) => {
+      const cx = 30 + (col + i) * colWidth;
+      const pn = topo.nodes.get(`pci-${busid}`);
+      if (pn) { pn.x = cx; pn.y = layers[1].y; }
+      const gn = topo.nodes.get(`gpu-${info.gpus[i]}`);
+      if (gn) { gn.x = cx; gn.y = layers[2].y; }
+    });
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 5. SVG RENDERER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const svg = document.getElementById('topo-svg');
+const tooltip = document.getElementById('tooltip');
+const NS = 'http://www.w3.org/2000/svg';
+
+const COLORS = {
+  cpu:  { fill: '#1a3a5c', stroke: '#58a6ff', text: '#79c0ff' },
+  pci:  { fill: '#2a1a4e', stroke: '#bc8cff', text: '#d2a8ff' },
+  gpu:  { fill: '#0e4429', stroke: '#3fb950', text: '#7ee787' },
+  rank: { fill: '#3d1a00', stroke: '#d29922', text: '#ffa657' },
+  edge: '#3fb950'
+};
+
+function el(tag, attrs = {}) {
+  const e = document.createElementNS(NS, tag);
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  return e;
+}
+
+function renderTopology() {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const W = svg.parentElement.clientWidth || 900,
+        H = svg.parentElement.clientHeight || 600;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const defs = el('defs');
+  const filter = el('filter', { id: 'g', x: '-20%', y: '-20%', width: '140%', height: '140%' });
+  filter.appendChild(el('feGaussianBlur', { stdDeviation: '3', result: 'b' }));
+  const mg = el('feMerge');
+  mg.appendChild(el('feMergeNode', { in: 'b' }));
+  mg.appendChild(el('feMergeNode', { in: 'SourceGraphic' }));
+  filter.appendChild(mg);
+  defs.appendChild(filter);
+  
+  const marker = el('marker', { id: 'a', viewBox: '0 0 10 10', refX: 10, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto' });
+  marker.appendChild(el('path', { d: 'M0 0L10 5L0 10z', fill: '#3fb950' }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  computeLayout();
+
+  // Edges
+  const eg = el('g');
+  topo.edges.forEach(e => {
+    const fn = topo.nodes.get(e.from), tn = topo.nodes.get(e.to);
+    if (!fn || !tn) return;
+    const l = el('line', {
+      x1: fn.x, y1: fn.y + NODE_H/2, x2: tn.x, y2: tn.y - NODE_H/2,
+      stroke: e.discovered ? COLORS.edge : '#21262d',
+      'stroke-width': e.discovered ? 2 : 1,
+      'stroke-dasharray': e.discovered ? 'none' : '4,4',
+      'marker-end': e.discovered ? 'url(#a)' : ''
+    });
+    eg.appendChild(l);
+    if (e.label && e.discovered) {
+      const lb = el('text', { x: (fn.x+tn.x)/2, y: (fn.y+tn.y)/2 - 5, 'text-anchor': 'middle', fill: '#8b949e', 'font-size': 8 });
+      lb.textContent = e.label;
+      eg.appendChild(lb);
+    }
+  });
+  svg.appendChild(eg);
+
+  // Nodes
+  const ng = el('g');
+  ['cpu', 'pci', 'gpu', 'rank'].forEach(type => {
+    topo.nodes.forEach(n => {
+      if (n.type !== type) return;
+      drawNode(ng, n);
+    });
+  });
+  svg.appendChild(ng);
+}
+
+function drawNode(g, node) {
+  const c = COLORS[node.type] || { fill: '#1c2128', stroke: '#30363d', text: '#8b949e' };
+  const op = node.discovered ? 1 : 0.06;
+  const grp = el('g', { transform: `translate(${node.x - NODE_W/2}, ${node.y - NODE_H/2})`, opacity: op });
+
+  let shape;
+  const rx = node.type === 'cpu' ? 18 : node.type === 'gpu' ? (node.extra.rank !== undefined ? 4 : 4) : 4;
+  shape = el('rect', {
+    width: NODE_W, height: NODE_H, rx, ry: rx,
+    fill: c.fill, stroke: node.discovered ? c.stroke : '#21262d',
+    'stroke-width': node.discovered ? 2 : 1,
+    filter: (node.discovered && (node.type === 'gpu' || node.type === 'cpu')) ? 'url(#g)' : ''
+  });
+  grp.appendChild(shape);
+
+  // GPU with rank: show both labels
+  if (node.type === 'gpu' && node.extra.rank !== undefined) {
+    const lbl = el('text', { x: NODE_W/2, y: NODE_H/2 - 3, 'text-anchor': 'middle', fill: c.text, 'font-size': 9, 'font-weight': '600' });
+    lbl.textContent = `${node.label}`;
+    grp.appendChild(lbl);
+    const sub = el('text', { x: NODE_W/2, y: NODE_H/2 + 11, 'text-anchor': 'middle', fill: '#ffa657', 'font-size': 8, 'font-weight': '500' });
+    sub.textContent = `rank ${node.extra.rank}`;
+    grp.appendChild(sub);
+  } else {
+    const lbl = el('text', { x: NODE_W/2, y: NODE_H/2 + 4, 'text-anchor': 'middle', fill: node.discovered ? c.text : '#484f58', 'font-size': 10, 'font-weight': '500' });
+    lbl.textContent = node.label;
+    grp.appendChild(lbl);
+  }
+
+  shape.style.cursor = 'pointer';
+  grp.addEventListener('mouseenter', e => {
+    const r = svg.getBoundingClientRect();
+    let html = `<b>${node.type.toUpperCase()}</b> ${node.label}<br>`;
+    if (node.extra.detail) html += node.extra.detail.replace(/\n/g, '<br>');
+    tooltip.innerHTML = html;
+    tooltip.className = 'tooltip visible';
+    tooltip.style.left = (e.clientX - r.left + 12) + 'px';
+    tooltip.style.top = (e.clientY - r.top - 10) + 'px';
+  });
+  grp.addEventListener('mousemove', e => {
+    const r = svg.getBoundingClientRect();
+    tooltip.style.left = (e.clientX - r.left + 12) + 'px';
+    tooltip.style.top = (e.clientY - r.top - 10) + 'px';
+  });
+  grp.addEventListener('mouseleave', () => { tooltip.className = 'tooltip'; });
+
+  if (!node.discovered && (node.type === 'gpu' || node.type === 'cpu')) {
+    grp.appendChild(el('circle', { cx: NODE_W/2, cy: NODE_H/2, r: NODE_H/2 + 2, fill: 'none', stroke: '#30363d', 'stroke-width': 1, 'stroke-dasharray': '2,2' }));
+  }
+  g.appendChild(grp);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 6. PLAYBACK ENGINE
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+let currentStep = -1, ytIdx = [], parsedLines = [], autoInterval = null, autoPlaying = false;
+
+function initData() {
+  ytIdx = [];
+  parsedLines = RAW_LOG.map((l, i) => { const p = parseYTTrace(l); if (p && p.type !== 'src') ytIdx.push(i); return { raw: l, parsed: p }; });
+  document.getElementById('step-total').textContent = ytIdx.length;
+}
+
+function renderLog() {
+  const stream = document.getElementById('log-stream');
+  stream.innerHTML = '';
+  parsedLines.forEach((l, i) => {
+    if (i > currentStep + 80 && currentStep >= 0) return;
+    const el = document.createElement('div');
+    el.className = 'log-line';
+    if (l.parsed) {
+      el.className += ' yt-trace ' + (l.parsed.type === 'src' ? 'src' : l.parsed.type);
+      el.innerHTML = l.raw.replace('[YT-TRACE]', '<span class="tag">[YT-TRACE]</span>');
+    } else {
+      el.textContent = l.raw;
+      el.style.color = '#484f58';
+    }
+    if (i === currentStep) {
+      el.className += ' current';
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    stream.appendChild(el);
+  });
+}
+
+function advanceTo(step) {
+  if (step < -1) step = -1;
+  if (step >= ytIdx.length) step = ytIdx.length - 1;
+  currentStep = step;
+
+  topo.nodes.forEach(n => { n.discovered = false; });
+  topo.edges.forEach(e => { e.discovered = false; });
+
+  for (let i = 0; i <= step && i < ytIdx.length; i++) {
+    const p = parsedLines[ytIdx[i]].parsed;
+    if (p) processTrace(p);
+  }
+
+  renderLog();
+  renderTopology();
+  updateStats();
+  document.getElementById('step-num').textContent = currentStep + 1;
+  document.getElementById('btn-prev').disabled = currentStep < 0;
+  document.getElementById('btn-next').disabled = currentStep >= ytIdx.length - 1;
+}
+
+function processTrace(p) {
+  const d = p.data;
+  switch (p.type) {
+    case 'cpu': {
+      const id = `numa-${d.numa}`;
+      topo.addNode(id, 'cpu', `NUMA ${d.numa}`, {
+        detail: `arch=${d.arch}\nvendor=${d.vendor}\nfamily=${d.family} model=${d.model}\naffinity=${d.affinity}`
+      });
+      topo.discoverNode(id);
+      break;
+    }
+    case 'pci': {
+      const busid = d.busid;
+      const id = `pci-${busid}`;
+      topo.addNode(id, 'pci', busid.slice(-11), {
+        detail: `class=${d.class}\nvendor=${d.vendor} device=${d.device}\nlink=${d.link} width=${d.width}`
+      });
+      topo.discoverNode(id);
+      const numaId = BUSID_NUMA[busid];
+      if (numaId !== undefined) {
+        topo.addEdge(`numa-${numaId}`, id, `${d.link}`);
+        topo.markEdgeDiscovered(`numa-${numaId}`, id);
+      }
+      break;
+    }
+    case 'gpu': {
+      const dev = d.dev, busid = d.busid;
+      const id = `gpu-${dev}`;
+      topo.addNode(id, 'gpu', `GPU ${dev}`, { sm: d.sm, detail: `SM ${d.sm}\nbusid=${busid}` });
+      topo.discoverNode(id);
+      const pciId = `pci-${busid}`;
+      if (topo.nodes.has(pciId) && topo.nodes.get(pciId).discovered) {
+        topo.addEdge(pciId, id, 'PCIe');
+        topo.markEdgeDiscovered(pciId, id);
+      }
+      break;
+    }
+    case 'rank': {
+      const dev = parseInt(d.rank);  // rank number is the GPU's rank
+      const id = `gpu-${dev}`;
+      const gn = topo.nodes.get(id);
+      if (gn) {
+        gn.extra.rank = d.rank;
+        gn.extra.gdr = d.gdr;
+        gn.extra.detail = `SM ${gn.extra.sm || '?'}\nrank=${d.rank} gdr=${d.gdr} mlopart=${d.mlopart}`;
+        topo.discoverNode(id);  // already discovered, but ensure full opacity
+      }
+      break;
+    }
+  }
+}
+
+function updateStats() {
+  let g = 0, p = 0, c = 0, r = 0;
+  topo.nodes.forEach(n => {
+    if (!n.discovered) return;
+    if (n.type === 'gpu') { g++; if (n.extra.rank !== undefined) r++; }
+    else if (n.type === 'pci') p++;
+    else if (n.type === 'cpu') c++;
+  });
+  document.getElementById('stat-gpu').textContent = g + ' GPU';
+  document.getElementById('stat-pci').textContent = p + ' PCI';
+  document.getElementById('stat-cpu').textContent = c + ' NUMA';
+  document.getElementById('stat-rank').textContent = r + ' Ranked';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 7. CONTROLS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+document.getElementById('btn-next').addEventListener('click', () => advanceTo(currentStep + 1));
+document.getElementById('btn-prev').addEventListener('click', () => advanceTo(currentStep - 1));
+document.getElementById('btn-reset').addEventListener('click', () => { if (autoPlaying) toggleAuto(); advanceTo(-1); });
+document.getElementById('btn-auto').addEventListener('click', toggleAuto);
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); advanceTo(currentStep + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); advanceTo(currentStep - 1); }
+  if (e.key === 'r') { document.getElementById('btn-reset').click(); }
+  if (e.key === 'a') { toggleAuto(); }
+});
+
+function toggleAuto() {
+  autoPlaying = !autoPlaying;
+  document.getElementById('btn-auto').textContent = autoPlaying ? '⏹' : '▶▶';
+  document.getElementById('btn-auto').className = autoPlaying ? 'primary' : '';
+  if (autoPlaying) {
+    autoInterval = setInterval(() => {
+      if (currentStep >= ytIdx.length - 1) { toggleAuto(); return; }
+      advanceTo(currentStep + 1);
+    }, 700);
+  } else { clearInterval(autoInterval); autoInterval = null; }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 8. INIT
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function init() {
+  initData();
+  Object.entries(NUMA_MAP).forEach(([numa, v]) => {
+    topo.addNode(`numa-${numa}`, 'cpu', `NUMA ${numa}`, { detail: '' });
+    v.pcis.forEach(busid => {
+      topo.addNode(`pci-${busid}`, 'pci', busid.slice(-11), { detail: '' });
+      topo.addEdge(`numa-${numa}`, `pci-${busid}`);
+    });
+    v.gpus.forEach(dev => {
+      topo.addNode(`gpu-${dev}`, 'gpu', `GPU ${dev}`, { detail: '' });
+    });
+  });
+  advanceTo(-1);
+  window.addEventListener('resize', () => { if (!autoPlaying) renderTopology(); });
+}
+
+init();
+</script>
+</body>
+</html>

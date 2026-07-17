@@ -115,15 +115,15 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
           remPath->bw = bw;
           remPath->type = newType;
 
-          // YT-TRACE: first discovery of a GPU↔GPU link
-          if (baseNode->type == GPU && remNode->type == GPU && remPath->type == PATH_DIS) {
-            YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_link gpu=%d peer=%d link=%d bw=%.0f hops=%d",
-                     baseNode->gpu.dev, remNode->gpu.dev, link->type, bw, path->count+1);
-          }
-          // YT-TRACE: first discovery of a GPU↔DEV (NVSwitch) link
-          if (baseNode->type == GPU && remNode->type == DEV && remPath->type == PATH_DIS) {
-            YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_dev gpu=%d dev_id=0x%lx link=%d bw=%.0f hops=%d",
-                     baseNode->gpu.dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id), link->type, bw, path->count+1);
+          // YT-TRACE: when a GPU discovers a new node in BFS
+          if (baseNode->type == GPU && remPath->type == PATH_DIS) {
+            char _desc[64];
+            if (remNode->type == GPU)
+              snprintf(_desc, sizeof(_desc), "gpu=%d peer=%d", baseNode->gpu.dev, remNode->gpu.dev);
+            else
+              snprintf(_desc, sizeof(_desc), "gpu=%d to_type=%d to_id=0x%lx", baseNode->gpu.dev, remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id));
+            YT_TRACE(NCCL_GRAPH, "[TOPO] path link=%d bw=%.0f hops=%d %s",
+                     link->type, bw, path->count+1, _desc);
           }
 
           // Add to the list for the next iteration if not already in the list

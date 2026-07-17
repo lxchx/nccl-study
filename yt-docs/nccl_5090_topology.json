@@ -1,0 +1,556 @@
+{
+  "gpu_paths": {
+    "27000": [
+      {
+        "busid": "27000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "38000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "a8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "b8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "38000": [
+      {
+        "busid": "27000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "38000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "a8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "b8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "49000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "5a000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "98000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "a8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "b8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "5a000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "5a000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "98000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "a8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "b8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "98000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "a8000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "b8000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "a8000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "a8000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "b8000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "b8000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "a8000",
+        "hops": 2,
+        "bw": 48.0,
+        "type": "PHB"
+      },
+      {
+        "busid": "b8000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      },
+      {
+        "busid": "c8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      }
+    ],
+    "c8000": [
+      {
+        "busid": "27000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "38000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "49000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "5a000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "98000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "a8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "b8000",
+        "hops": 3,
+        "bw": 40.0,
+        "type": "SYS"
+      },
+      {
+        "busid": "c8000",
+        "hops": 0,
+        "bw": 5000.0,
+        "type": "LOC"
+      }
+    ]
+  },
+  "cpu_connections": {},
+  "ring_config": [
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 4,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    },
+    {
+      "pattern_id": 1,
+      "cross_nic": 0,
+      "n_channels": 2,
+      "bw_intra": 20.0,
+      "bw_inter": 20.0,
+      "type_intra": "SYS",
+      "type_inter": "PIX"
+    }
+  ],
+  "system_bw": {
+    "max_bw": 48.0,
+    "total_bw": 48.0
+  },
+  "raw_log": "/Users/lichuan/storage_yuntun/nccl/yt-docs/nccl_5090_full_probe.log"
+}

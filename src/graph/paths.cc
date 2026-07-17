@@ -115,6 +115,17 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
           remPath->bw = bw;
           remPath->type = newType;
 
+          // YT-TRACE: first discovery of a GPU↔GPU link
+          if (baseNode->type == GPU && remNode->type == GPU && remPath->type == PATH_DIS) {
+            YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_link gpu=%d peer=%d link=%d bw=%.0f hops=%d",
+                     baseNode->gpu.dev, remNode->gpu.dev, link->type, bw, path->count+1);
+          }
+          // YT-TRACE: first discovery of a GPU↔DEV (NVSwitch) link
+          if (baseNode->type == GPU && remNode->type == DEV && remPath->type == PATH_DIS) {
+            YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_dev gpu=%d dev_id=0x%lx link=%d bw=%.0f hops=%d",
+                     baseNode->gpu.dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id), link->type, bw, path->count+1);
+          }
+
           // Add to the list for the next iteration if not already in the list
           int i;
           for (i = 0; i < nextNodeList.count; i++) {
@@ -860,6 +871,15 @@ ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm
   for (int n = 0; n < system->nodes[NET].count; n++) {
     struct ncclTopoNode* net = system->nodes[NET].nodes + n;
     NCCLCHECK(ncclTopoGetLocalGpu(system, net->id, &net->net.localGpu));
+  }
+
+  // YT-TRACE: final GPU→GPU path matrix
+  for (int g = 0; g < system->nodes[GPU].count; g++) {
+    for (int p = g+1; p < system->nodes[GPU].count; p++) {
+      struct ncclTopoLinkList* path = system->nodes[GPU].nodes[g].paths[GPU] + p;
+      YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_matrix gpu=%d peer=%d type=%d bw=%.0f hops=%d",
+               g, p, path->type, path->bw, path->count);
+    }
   }
   return ncclSuccess;
 }

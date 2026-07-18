@@ -180,14 +180,27 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
   link->remNode = remNode;
   link->bw += bw;
 
-  // YT-TRACE: physical link established
+  // YT-TRACE: physical link + node details
   {
     int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
     int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
-    YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f",
-             node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),
-             remNode->type, to_dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id),
-             type, bw);
+    int from_rank = (node->type == GPU) ? node->gpu.rank : -1;
+    int to_rank = (remNode->type == GPU) ? remNode->gpu.rank : -1;
+    int from_cc = (node->type == GPU) ? node->gpu.cudaCompCap : -1;
+    int to_cc = (remNode->type == GPU) ? remNode->gpu.cudaCompCap : -1;
+    int from_gdr = (node->type == GPU) ? node->gpu.gdrSupport : -1;
+    int to_gdr = (remNode->type == GPU) ? remNode->gpu.gdrSupport : -1;
+    int from_nlinks = node->nlinks;
+    int to_nlinks = remNode->nlinks;
+    float final_bw = link->bw;
+    YT_TRACE(NCCL_GRAPH, "[TOPO] node from_type=%d from_id=0x%lx from_dev=%d from_rank=%d from_cc=%d from_gdr=%d from_nlinks=%d",
+             node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), from_dev, from_rank, from_cc, from_gdr, from_nlinks);
+    YT_TRACE(NCCL_GRAPH, "[TOPO] node to_type=%d to_id=0x%lx to_dev=%d to_rank=%d to_cc=%d to_gdr=%d to_nlinks=%d",
+             remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), to_dev, to_rank, to_cc, to_gdr, to_nlinks);
+    YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_id=0x%lx to_type=%d to_id=0x%lx link_type=%d bw=%.0f total_bw=%.0f",
+             node->type, NCCL_TOPO_ID_LOCAL_ID(node->id),
+             remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id),
+             type, bw, final_bw);
   }
 
   // Sort links in BW descending order

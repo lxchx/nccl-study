@@ -121,9 +121,9 @@ function newTopo() {
       if (this.nodes.has(id)) return this.nodes.get(id);
       const n={id,type,label,extra,discovered:false}; this.nodes.set(id,n); return n;
     },
-    addEdge(f,t,label='') {
+    addEdge(f,t,label='',extra={}) {
       if (this.edges.some(e=>e.from===f&&e.to===t)) return;
-      this.edges.push({from:f,to:t,label,discovered:false});
+      this.edges.push({from:f,to:t,label,extra,discovered:false});
     },
     discoverNode(id) { const n=this.nodes.get(id); if(n)n.discovered=true; },
     markEdge(f,t) {
@@ -153,7 +153,8 @@ function parse(l) {
   if (t==='scan') { if (d.dev!==undefined) t='gpu'; else if (d.numa!==undefined) t='cpu'; else if (d.busid!==undefined) t='pci'; }
   else if (t==='rank') t='rank'; else if (t==='src') t='src';
   else if (t==='topo') {
-    if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
+    if (d.from_type !== undefined && d.from_dev !== undefined && d.to_type === undefined) t = 'topo_node';
+    else if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
     else t = 'topo_other';
   }
   return { rank:parseInt(m[1]), phase:m[2], type:t, data:d, raw:l };
@@ -258,13 +259,15 @@ const visOptions = {
     shape: 'box', borderWidth: 3,
     font: {color:'#c9d1d9', size:16, face:'SF Mono,Menlo,monospace'},
     color: {background:'#1c2128', border:'#30363d'},
-    margin: {top:10, bottom:10, left:16, right:16}
+    margin: {top:10, bottom:10, left:16, right:16},
+    title: ''
   },
   edges: {
-    width: 3, arrows: {to: {enabled:true, scaleFactor:0.8}},
+    width: 3, arrows: {to: {enabled:false}},
     font: {size:12, color:'#8b949e', face:'SF Mono,Menlo,monospace', strokeWidth:0},
     color: {color:'#21262d', highlight:'#3fb950', hover:'#3fb950'},
-    smooth: {type:'curvedCW', roundness:0.1}
+    smooth: {type:'curvedCW', roundness:0.1},
+    title: ''
   },
   layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } },
   physics: { enabled:false },
@@ -307,7 +310,8 @@ function buildVis(ch) {
     visEdges.add({
       from: e.from, to: e.to, label: e.label || undefined,
       color: e.discovered ? { color:'#3fb950' } : { color:'#21262d' },
-      width: e.discovered ? 2 : 1, dashes: e.discovered ? false : [4,4]
+      width: e.discovered ? 2 : 1, dashes: e.discovered ? false : [4,4],
+      title: e.extra && e.extra.detail ? e.extra.detail.replace(/\n/g,'<br>') : undefined
     });
   });
 }
@@ -523,8 +527,21 @@ function proc(p, topo) {
       }
       break;
     }
+    case 'topo_node': {
+      // [TOPO] node from_type=0 from_id=0x... from_dev=3 from_rank=3 from_cc=120 from_gdr=0 from_nlinks=3
+      const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+      const t = parseInt(d.from_type);
+      const id = d.from_id;
+      const dev = parseInt(d.from_dev);
+      const nodeId = t===0 ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
+      const label = t===0 ? 'GPU '+dev : (typeNames[t]||'T'+t)+' 0x'+id.slice(-4);
+      const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
+      topo.addNode(nodeId, t===0?'gpu':'pci', label, {detail});
+      topo.discoverNode(nodeId);
+      break;
+    }
     case 'topo_link': {
-      // [TOPO] link from_type=0 from_dev=3 from_id=0x... to_type=1 to_dev=-1 to_id=0x... link_type=4 bw=48
+      // [TOPO] link from_type=0 from_id=0x... to_type=1 to_id=0x... link_type=4 bw=48 total_bw=48
       const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
       const linkNames = ['LOC','NVL','NVB','C2C','PCI','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
       const fType = parseInt(d.from_type);
@@ -532,14 +549,14 @@ function proc(p, topo) {
       const fDev = parseInt(d.from_dev);
       const tDev = parseInt(d.to_dev);
       const lbl = linkNames[parseInt(d.link_type)] || 'L'+d.link_type;
-      // Map to visualizer node IDs: GPU uses 'gpu-{dev}', others use 'type-id'
       const fId = fType===0 ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
       const tId = tType===0 ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
       const fName = fType===0 ? 'GPU '+fDev : (typeNames[fType]||'T'+fType)+' 0x'+d.from_id.slice(-4);
       const tName = tType===0 ? 'GPU '+tDev : (typeNames[tType]||'T'+tType)+' 0x'+d.to_id.slice(-4);
+      const detail = 'link_type='+linkNames[parseInt(d.link_type)]+'\nbw='+d.bw+' GB/s\ntotal_bw='+d.total_bw+' GB/s\nfrom='+fName+'\nto='+tName;
       topo.addNode(fId, fType===0?'gpu':'pci', fName, {});
       topo.addNode(tId, tType===0?'gpu':'pci', tName, {});
-      topo.addEdge(fId, tId, lbl+' '+d.bw+'GB');
+      topo.addEdge(fId, tId, lbl+' '+d.bw+'GB', {detail});
       topo.discoverNode(fId);
       topo.discoverNode(tId);
       topo.markEdge(fId, tId);

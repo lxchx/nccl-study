@@ -293,7 +293,7 @@ function nodeLevel(type) {
 }
 
 function buildVis(ch) {
-  const { topo, network, visNodes, visEdges } = ch;
+  const { topo, visNodes, visEdges } = ch;
   visNodes.clear(); visEdges.clear();
   
   topo.nodes.forEach(n => {
@@ -314,6 +314,25 @@ function buildVis(ch) {
       width: e.discovered ? 2 : 1, dashes: e.discovered ? false : [4,4]
     });
   });
+}
+
+// Physics-based layout for non-tree chapters
+function getVisOptions(chIdx) {
+  if (chIdx === 0) {
+    // SCAN: hierarchical tree
+    return { ...visOptions, layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } } };
+  }
+  // TOPO and beyond: force-directed
+  return { ...visOptions,
+    layout: { hierarchical: false },
+    physics: {
+      enabled: true,
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant:-80, centralGravity:0.008, springLength:200, springConstant:0.02, damping:0.4 },
+      stabilization: { iterations:50, fit:true }
+    },
+    interaction: { hover:true, zoomView:true, dragView:true, selectable:false, navigationButtons:false }
+  };
 }
 
 // ═══ Main state ═══
@@ -443,13 +462,13 @@ function go(s) {
   
   // Render
   buildVis(ch);
-  if (!ch.network) {
-    const canvas = document.getElementById('topo-canvas');
-    canvas.innerHTML = '';
-    ch.network = new vis.Network(canvas, { nodes: ch.visNodes, edges: ch.visEdges }, visOptions);
-  } else {
-    ch.network.setData({ nodes: ch.visNodes, edges: ch.visEdges });
+  const canvas = document.getElementById('topo-canvas');
+  if (ch.network) {
+    try { ch.network.destroy(); } catch(e){}
+    ch.network = null;
   }
+  canvas.innerHTML = '';
+  ch.network = new vis.Network(canvas, { nodes: ch.visNodes, edges: ch.visEdges }, getVisOptions(curCh));
   ch.network.fit({ animation: false });
   
   // Log

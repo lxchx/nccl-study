@@ -160,22 +160,12 @@ static ncclResult_t ncclTopoFollowPath(struct ncclTopoSystem* system, struct ncc
   NCCLCHECK(followPath(path, node1, path->count, bw, &step));
   if (step < path->count) goto rewind;
 
-  // YT-TRACE: path followed successfully
-  if (type1 == GPU && type2 == GPU) {
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] follow gpu=%d peer=%d bw=%.0f hops=%d type=%d ok=1",
-             node1->gpu.rank, node2->gpu.rank, bw, path->count, path->type);
-  }
   // Enough bandwidth : return destination node.
   graph->nHops += mult * path->count;
   *node = system->nodes[type2].nodes + index2;
   return ncclSuccess;
 
 rewind:
-  // YT-TRACE: path failed, rewinding
-  if (type1 == GPU && type2 == GPU) {
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] follow gpu=%d peer=%d bw=%.0f hops=%d type=%d ok=0",
-             node1->gpu.rank, node2->gpu.rank, bw, path->count, path->type);
-  }
   // Not enough bandwidth : rewind and exit.
   NCCLCHECK(followPath(path, node1, step, -bw, &step));
   return ncclSuccess;
@@ -636,14 +626,14 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
 
   int ngpus = system->nodes[GPU].count;
   if (step == ngpus) {
-    // YT-TRACE: channel completed
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] channel nChannels=%d pattern=%d bwIntra=%.0f nHops=%d",
-             graph->nChannels+1, graph->pattern, graph->bwIntra, graph->nHops);
     // Determine whether we found a better solution or not
     int copy = 0;
     graph->nChannels++;
     NCCLCHECK(ncclTopoCompareGraphs(system, graph, saveGraph, &copy));
+    // YT-TRACE: only log when a NEW best solution is found
     if (copy) {
+      YT_TRACE(NCCL_GRAPH, "[SEARCH] channel nChannels=%d pattern=%d bwIntra=%.0f nHops=%d",
+               graph->nChannels, graph->pattern, graph->bwIntra, graph->nHops);
       memcpy(saveGraph, graph, sizeof(struct ncclTopoGraph));
       if (graph->nChannels == graph->maxChannels) *time = -1;
     }

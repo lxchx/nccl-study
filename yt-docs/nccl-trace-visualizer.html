@@ -44,6 +44,10 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
 .btn-group button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
 .btn-group button.primary:hover{background:#388bfd}
 #topo-canvas{flex:1;position:relative;overflow:hidden;background:#0d1117}
+#legend{position:absolute;bottom:40px;left:10px;background:rgba(13,17,23,0.9);border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:10px;z-index:100}
+#legend .legend-item{display:flex;align-items:center;gap:6px;margin:3px 0}
+#legend .legend-color{width:12px;height:12px;border-radius:2px;border:2px solid}
+#legend .legend-line{width:20px;height:3px;border-radius:1px}
 #status-bar{padding:4px 14px;border-top:1px solid #30363d;background:#161b22;font-size:10px;color:#8b949e;display:flex;gap:10px;flex-shrink:0;align-items:center}
 #status-bar .stat{display:flex;gap:3px}
 #status-bar .stat-label{color:#484f58}
@@ -84,6 +88,15 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
   </div>
 </div>
 <div id="topo-canvas"></div>
+<div id="legend" style="display:none">
+  <div style="font-weight:600;margin-bottom:4px;color:#c9d1d9">图例</div>
+  <div class="legend-item"><div class="legend-color" style="background:#0e4429;border-color:#3fb950"></div><span>源节点 (Source)</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#0c2d6b;border-color:#58a6ff"></div><span>当前处理 (Processing)</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#3d2e00;border-color:#d29922"></div><span>队列中 (In Queue)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#ffd700"></div><span>简化边 (Simplified Edge)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#8b949e;border-top:2px dashed #8b949e;height:0"></div><span>最短路径树 (Prev)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#3fb950"></div><span>物理拓扑 (Physical)</span></div>
+</div>
 <div id="status-bar">
   <span class="stat"><span class="stat-label">Nodes:</span><span class="stat-value" id="stat-nodes">0</span></span>
   <span class="stat"><span class="stat-label">Edges:</span><span class="stat-value" id="stat-edges">0</span></span>
@@ -148,7 +161,11 @@ function parse(l) {
   const m = l.match(/\[(\d+)\].*?\[YT-TRACE\]\s+\[(\w+)\]\s+(.+)/);
   if (!m) return null;
   const d={}; let t = m[2].toLowerCase();
-  (m[3].match(/(\w+)=(?:"([^"]*)"|(\S+(?:\s+\S+)*?))(?=\s+\w+=|$)/g)||[])
+  // Extract label (first word) and key=value pairs
+  const content = m[3];
+  const labelMatch = content.match(/^(\w+)/);
+  if (labelMatch) d._label = labelMatch[1];
+  (content.match(/(\w+)=(?:"([^"]*)"|(\S+(?:\s+\S+)*?))(?=\s+\w+=|$)/g)||[])
     .forEach(x => { const e=x.indexOf('='); d[x.substring(0,e)]=x.substring(e+1); });
   if (t==='scan') { if (d.dev!==undefined) t='gpu'; else if (d.numa!==undefined) t='cpu'; else if (d.busid!==undefined) t='pci'; }
   else if (t==='rank') t='rank'; else if (t==='src') t='src';
@@ -158,7 +175,13 @@ function parse(l) {
     else t = 'topo_other';
   }
   else if (t==='search') {
-    if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
+    if (d._label === 'bfs_done') t = 'bfs_done';
+    else if (d._label === 'bfs_gpu_found') t = 'bfs_gpu_found';
+    else if (d._label === 'bfs_start') t = 'bfs_start';
+    else if (d._label === 'bfs_dequeue') t = 'bfs_dequeue';
+    else if (d._label === 'bfs_enqueue') t = 'bfs_enqueue';
+    else if (d._label === 'bfs_improve') t = 'bfs_improve';
+    else if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
     else if (d.nChannels !== undefined) t = 'search_channel';
     else t = 'search_other';
   }
@@ -299,26 +322,81 @@ function nodeLevel(type) {
 function buildVis(ch) {
   const { topo, visNodes, visEdges } = ch;
   visNodes.clear(); visEdges.clear();
+  const isSearch = ch.def && ch.def.id === 'SEARCH';
   
   topo.nodes.forEach(n => {
     const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+    let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+    let opacity = n.discovered ? 1.0 : 0.08;
+    let size = undefined;
+    
+    // BFS state highlighting (only for SEARCH chapter)
+    if (isSearch && bfsState.sourceGpu !== null) {
+      const gpuRank = parseInt(n.id.replace('gpu-',''));
+      if (n.id === 'gpu-'+bfsState.sourceGpu) {
+        // Source node: green
+        bg = '#0e4429'; border = '#3fb950'; borderWidth = 5; fontColor = '#3fb950';
+      } else if (bfsState.currentNode === n.id) {
+        // Current processing node: blue
+        bg = '#0c2d6b'; border = '#58a6ff'; borderWidth = 5; fontColor = '#58a6ff';
+      } else if (bfsState.queue.includes(n.id)) {
+        // Queue node: yellow
+        bg = '#3d2e00'; border = '#d29922'; borderWidth = 4; fontColor = '#d29922';
+      }
+    }
+    
+    // Show dist value on GPU nodes during BFS
+    let label = n.label;
+    if (isSearch && n.type === 'gpu' && bfsState.dist[n.id] !== undefined) {
+      label = n.label + '\n' + bfsState.dist[n.id] + 'GB';
+    }
+    
     visNodes.add({
-      id: n.id, label: n.label, level: nodeLevel(n.type),
-      opacity: n.discovered ? 1.0 : 0.08,
-      color: n.discovered ? { background:c.bg, border:c.border } : { background:'#1c2128', border:'#21262d' },
-      font: { color: n.discovered ? c.border : '#484f58', size: 15 },
+      id: n.id, label: label, level: nodeLevel(n.type),
+      opacity: opacity,
+      color: { background:bg, border:border },
+      borderWidth: borderWidth,
+      font: { color: fontColor, size: 15 },
       title: n.extra.detail ? n.extra.detail.replace(/\n/g,'<br>') : undefined
     });
   });
   
+  // Draw edges
   topo.edges.forEach(e => {
+    let edgeColor = e.discovered ? '#3fb950' : '#21262d';
+    let edgeWidth = e.discovered ? 2 : 1;
+    let dashes = e.discovered ? false : [4,4];
+    
+    // Simplified edges: thicker, brighter
+    if (e.extra && e.extra.simplified) {
+      edgeColor = '#ffd700';
+      edgeWidth = 4;
+      dashes = false;
+    }
+    
     visEdges.add({
       from: e.from, to: e.to, label: e.label || undefined,
-      color: e.discovered ? { color:'#3fb950' } : { color:'#21262d' },
-      width: e.discovered ? 2 : 1, dashes: e.discovered ? false : [4,4],
+      color: { color: edgeColor },
+      width: edgeWidth, dashes: dashes,
       title: e.extra && e.extra.detail ? e.extra.detail.replace(/\n/g,'<br>') : undefined
     });
   });
+  
+  // Draw prev arrows (dashed, gray)
+  if (isSearch && bfsState.sourceGpu !== null) {
+    Object.entries(bfsState.prev).forEach(([nodeId, prevId]) => {
+      if (prevId && topo.nodes.has(prevId) && topo.nodes.has(nodeId)) {
+        visEdges.add({
+          from: prevId, to: nodeId,
+          color: { color: '#8b949e' },
+          width: 2, dashes: [6,3],
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+          font: { size: 0 },
+          title: 'prev: '+prevId+' → '+nodeId
+        });
+      }
+    });
+  }
 }
 
 // Physics-based layout for non-tree chapters
@@ -338,6 +416,33 @@ function getVisOptions(chIdx) {
     },
     interaction: { hover:true, zoomView:true, dragView:true, selectable:false, navigationButtons:false }
   };
+}
+
+// ═══ BFS State (for Chapter 3 Part 1) ═══
+let bfsState = {
+  sourceGpu: null,
+  dist: {},      // gpu -> bandwidth (number)
+  prev: {},      // gpu -> prev node id (string)
+  queue: [],     // list of node ids currently in queue
+  currentNode: null,  // node currently being processed (blue)
+  simplifiedEdges: [] // [{from, to, type, bw, hops}]
+};
+
+function resetBfsState() {
+  bfsState = { sourceGpu: null, dist:{}, prev:{}, queue:[], currentNode:null, simplifiedEdges:[] };
+}
+
+// Map node_id (from traces) to topo node id
+const NODE_ID_MAP = {};
+function mapNodeId(nodeType, nodeId) {
+  const key = nodeType+':'+nodeId;
+  if (NODE_ID_MAP[key]) return NODE_ID_MAP[key];
+  // Fallback: use last 4 hex chars
+  const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+  const typeName = typeNames[nodeType] || 'T'+nodeType;
+  const shortId = nodeId.slice(-4);
+  NODE_ID_MAP[key] = typeName.toLowerCase()+'-'+shortId;
+  return NODE_ID_MAP[key];
 }
 
 // ═══ Main state ═══
@@ -418,6 +523,7 @@ function switchChapter(chIdx) {
   }
   
   curCh = chIdx;
+  resetBfsState();
   go(-1);
   updateChapterUI();
 }
@@ -430,6 +536,8 @@ function updateChapterUI() {
   document.getElementById('btn-ch-next').disabled = curCh >= chapters.length - 1;
   document.getElementById('step-total').textContent = ch.lineIdx.length;
   document.getElementById('step-num').textContent = ch.step+1;
+  // Show legend only for SEARCH chapter
+  document.getElementById('legend').style.display = ch.def.id === 'SEARCH' ? 'block' : 'none';
 }
 
 // ═══ Step Navigation ═══
@@ -544,6 +652,8 @@ function proc(p, topo) {
       const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
       topo.addNode(nodeId, isGpu?'gpu':'pci', label, {detail});
       topo.discoverNode(nodeId);
+      // Store mapping: node_type:node_id -> topoId (for BFS traces)
+      NODE_ID_MAP[t+':'+id] = nodeId;
       break;
     }
     case 'topo_link': {
@@ -568,6 +678,75 @@ function proc(p, topo) {
       topo.discoverNode(fId);
       topo.discoverNode(tId);
       topo.markEdge(fId, tId);
+      break;
+    }
+    case 'bfs_start': {
+      // [SEARCH] bfs_start gpu=0
+      resetBfsState();
+      const gpuRank = parseInt(d.gpu);
+      bfsState.sourceGpu = gpuRank;
+      bfsState.dist[gpuRank] = 0;
+      bfsState.queue = ['gpu-'+gpuRank];
+      bfsState.currentNode = null;
+      // Ensure GPU node exists
+      const gid = 'gpu-'+gpuRank;
+      topo.addNode(gid, 'gpu', 'GPU '+gpuRank, {});
+      topo.discoverNode(gid);
+      break;
+    }
+    case 'bfs_dequeue': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      bfsState.currentNode = topoId;
+      bfsState.queue = bfsState.queue.filter(id => id !== topoId);
+      break;
+    }
+    case 'bfs_enqueue': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      if (!topo.nodes.has(topoId)) {
+        const isGpu = nodeType === 0;
+        const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+        const typeName = typeNames[nodeType] || 'T'+nodeType;
+        topo.addNode(topoId, isGpu?'gpu':'pci', (isGpu?'GPU ':(typeName+' 0x'))+nodeId.slice(-4), {});
+      }
+      topo.discoverNode(topoId);
+      if (!bfsState.queue.includes(topoId)) bfsState.queue.push(topoId);
+      break;
+    }
+    case 'bfs_improve': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      bfsState.dist[topoId] = parseFloat(d.new_bw);
+      bfsState.prev[topoId] = bfsState.currentNode;
+      break;
+    }
+    case 'bfs_gpu_found': {
+      // [SEARCH] bfs_gpu_found gpu=0 peer=1 type=NVL bw=48 hops=2
+      const srcGpu = parseInt(d.gpu);
+      const peerGpu = parseInt(d.peer);
+      const srcId = 'gpu-'+srcGpu;
+      const dstId = 'gpu-'+peerGpu;
+      const pathTypes = ['LOC','NVL','NVB','C2C','PIX','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const typeIdx = pathTypes.indexOf(d.type);
+      const lbl = d.type || 'T'+typeIdx;
+      // Add simplified edge
+      topo.addNode(srcId, 'gpu', 'GPU '+srcGpu, {});
+      topo.addNode(dstId, 'gpu', 'GPU '+peerGpu, {});
+      topo.discoverNode(srcId);
+      topo.discoverNode(dstId);
+      // Remove old edges between these GPUs if any, add new simplified edge
+      topo.edges = topo.edges.filter(e => !((e.from===srcId&&e.to===dstId)||(e.from===dstId&&e.to===srcId)));
+      topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops, simplified:true});
+      bfsState.simplifiedEdges.push({from:srcId, to:dstId, type:lbl, bw:parseFloat(d.bw), hops:parseInt(d.hops)});
+      break;
+    }
+    case 'bfs_done': {
+      bfsState.currentNode = null;
+      bfsState.queue = [];
       break;
     }
     case 'search_path': {

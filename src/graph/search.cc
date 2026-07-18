@@ -362,6 +362,8 @@ ncclResult_t ncclTopoSearchTryGpu(struct ncclTopoSystem* system, struct ncclTopo
   struct ncclTopoNode* gpu;
   NCCLCHECK(ncclTopoFollowPath(system, graph, type, index, GPU, g, 1, &gpu));
   if (gpu) {
+    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_try step=%d from_dev=%d to_gpu=%d pattern=%d",
+             step, index, g, graph->pattern);
     gpu->used ^= flag;
     NCCLCHECK(ncclTopoSearchRecGpu(system, graph, saveGraph, gpu, step, backToNet, backToFirstRank, forcedOrder, time));
     gpu->used ^= flag;
@@ -632,7 +634,7 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
     NCCLCHECK(ncclTopoCompareGraphs(system, graph, saveGraph, &copy));
     // YT-TRACE: only log when a NEW best solution is found
     if (copy) {
-      YT_TRACE(NCCL_GRAPH, "[SEARCH] channel nChannels=%d pattern=%d bwIntra=%.0f nHops=%d",
+      YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_found channel=%d pattern=%d bwIntra=%.0f nHops=%d",
                graph->nChannels, graph->pattern, graph->bwIntra, graph->nHops);
       memcpy(saveGraph, graph, sizeof(struct ncclTopoGraph));
       if (graph->nChannels == graph->maxChannels) *time = -1;

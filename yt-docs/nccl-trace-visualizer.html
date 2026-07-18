@@ -381,30 +381,35 @@ function initChapters(rawLog) {
 function switchChapter(chIdx) {
   if (chIdx < 0 || chIdx >= chapters.length) return;
   
-  // Rebuild this chapter's topo from scratch
   const ch = chapters[chIdx];
+  
+  // For chapter 0 (no dependency), preserve pre-populated topology if exists
+  if (ch.def.dependsOn < 0 && ch.topo.nodes.size > 0) {
+    curCh = chIdx;
+    go(-1);
+    updateChapterUI();
+    return;
+  }
+  
+  // For chapters with dependency, rebuild from scratch
   ch.topo = newTopo();
   
-  // If depends on previous chapter, clone its final state as base
   if (ch.def.dependsOn >= 0 && ch.def.dependsOn < chIdx) {
     const dep = chapters[ch.def.dependsOn];
-    // To get the final state of dep, we need to run all its traces
     ch.baseTopo = dep.topo.cloneDiscovered();
     
-    // Copy base into current topo
     ch.baseTopo.nodes.forEach(n => {
       ch.topo.addNode(n.id, n.type, n.label, {...n.extra});
     });
     ch.baseTopo.edges.forEach(e => {
       ch.topo.addEdge(e.from, e.to, e.label);
     });
-    // Mark all base nodes/edges as discovered
     ch.topo.nodes.forEach(n => n.discovered = true);
     ch.topo.edges.forEach(e => e.discovered = true);
   }
   
   curCh = chIdx;
-  go( -1);  // step -1 = show base only
+  go(-1);
   updateChapterUI();
 }
 

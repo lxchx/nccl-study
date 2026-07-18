@@ -362,8 +362,6 @@ ncclResult_t ncclTopoSearchTryGpu(struct ncclTopoSystem* system, struct ncclTopo
   struct ncclTopoNode* gpu;
   NCCLCHECK(ncclTopoFollowPath(system, graph, type, index, GPU, g, 1, &gpu));
   if (gpu) {
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_try step=%d from_dev=%d to_gpu=%d pattern=%d",
-             step, index, g, graph->pattern);
     gpu->used ^= flag;
     NCCLCHECK(ncclTopoSearchRecGpu(system, graph, saveGraph, gpu, step, backToNet, backToFirstRank, forcedOrder, time));
     gpu->used ^= flag;
@@ -647,6 +645,8 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
   }
   graph->intra[graph->nChannels * ngpus + step] = gpu->gpu.rank;
   int g = gpu - system->nodes[GPU].nodes;
+  YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_step step=%d gpu_dev=%d gpu_rank=%d channel=%d pattern=%d",
+           step, g, gpu->gpu.rank, graph->nChannels, graph->pattern);
   int nets[NCCL_TOPO_MAX_NODES];
   if (step == backToNet) {
     // first get back to NIC

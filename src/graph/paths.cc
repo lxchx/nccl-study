@@ -109,13 +109,7 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
                  remNode->nlinks, node->type, node->id);
             return ncclInternalError;
           }
-          // Copy the rest of the path
-          for (int i = 0; i < path->count; i++) remPath->list[i + 1] = path->list[i];
-          remPath->count = path->count + 1;
-          remPath->bw = bw;
-          remPath->type = newType;
-
-          // YT-TRACE: when a GPU discovers a new node in BFS
+          // YT-TRACE: when a GPU discovers a new node in BFS (before updating remPath)
           if (baseNode->type == GPU && remPath->type == PATH_DIS) {
             char _desc[64];
             if (remNode->type == GPU)
@@ -125,6 +119,12 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
             YT_TRACE(NCCL_GRAPH, "[TOPO] path link=%d bw=%.0f hops=%d %s",
                      link->type, bw, path->count+1, _desc);
           }
+
+          // Copy the rest of the path
+          for (int i = 0; i < path->count; i++) remPath->list[i + 1] = path->list[i];
+          remPath->count = path->count + 1;
+          remPath->bw = bw;
+          remPath->type = newType;
 
           // Add to the list for the next iteration if not already in the list
           int i;

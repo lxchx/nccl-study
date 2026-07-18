@@ -41,6 +41,11 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
     for (int i = 0; i < system->nodes[baseNode->type].count; i++) baseNode->paths[baseNode->type][i].type = PATH_DIS;
   }
 
+  // YT-TRACE: BFS start (only for GPU base nodes)
+  if (baseNode->type == GPU) {
+    YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_start gpu=%d", baseNode->gpu.rank);
+  }
+
   // breadth-first search to set all paths to that node in the system
   struct ncclTopoNodeList nodeList;
   struct ncclTopoNodeList nextNodeList = {{0}, 0};
@@ -56,6 +61,10 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
     nextNodeList.count = 0;
     for (int n = 0; n < nodeList.count; n++) {
       struct ncclTopoNode* node = nodeList.list[n];
+      // YT-TRACE: dequeue node
+      if (baseNode->type == GPU) {
+        YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_dequeue node_type=%d node_id=0x%lx", node->type, node->id);
+      }
       struct ncclTopoLinkList* path;
       NCCLCHECK(getPath(system, node, baseNode->type, baseNode->id, &path));
       for (int l = 0; l < node->nlinks; l++) {
@@ -120,11 +129,34 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
           for (i = 0; i < nextNodeList.count; i++) {
             if (nextNodeList.list[i] == remNode) break;
           }
-          if (i == nextNodeList.count) nextNodeList.list[nextNodeList.count++] = remNode;
+          if (i == nextNodeList.count) {
+            nextNodeList.list[nextNodeList.count++] = remNode;
+            // YT-TRACE: enqueue node
+            if (baseNode->type == GPU) {
+              YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_enqueue node_type=%d node_id=0x%lx from_type=%d from_id=0x%lx bw=%.0f",
+                       remNode->type, remNode->id, node->type, node->id, bw);
+            }
+          }
+          // YT-TRACE: path improved
+          if (baseNode->type == GPU) {
+            const char* topoPathTypeStr[] = {"LOC","NVL","NVB","C2C","PIX","PXB","P2C","PXN","PHB","SYS","NET","DIS"};
+            YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_improve node_type=%d node_id=0x%lx new_type=%s new_bw=%.0f new_hops=%d",
+                     remNode->type, remNode->id, topoPathTypeStr[newType], bw, path->count + 1);
+          }
+          // YT-TRACE: GPU found
+          if (baseNode->type == GPU && remNode->type == GPU) {
+            const char* topoPathTypeStr[] = {"LOC","NVL","NVB","C2C","PIX","PXB","P2C","PXN","PHB","SYS","NET","DIS"};
+            YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_gpu_found gpu=%d peer=%d type=%s bw=%.0f hops=%d",
+                     baseNode->gpu.rank, remNode->gpu.rank, topoPathTypeStr[newType], bw, path->count + 1);
+          }
         }
       }
     }
     memcpy(&nodeList, &nextNodeList, sizeof(nodeList));
+  }
+  // YT-TRACE: BFS done
+  if (baseNode->type == GPU) {
+    YT_TRACE(NCCL_GRAPH, "[SEARCH] bfs_done gpu=%d", baseNode->gpu.rank);
   }
   return ncclSuccess;
 }

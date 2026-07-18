@@ -157,6 +157,11 @@ function parse(l) {
     else if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
     else t = 'topo_other';
   }
+  else if (t==='search') {
+    if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
+    else if (d.nChannels !== undefined) t = 'search_channel';
+    else t = 'search_other';
+  }
   return { rank:parseInt(m[1]), phase:m[2], type:t, data:d, raw:l };
 }
 
@@ -565,6 +570,33 @@ function proc(p, topo) {
       topo.markEdge(fId, tId);
       break;
     }
+    case 'search_path': {
+      // [SEARCH] gpu_path gpu=0 peer=1 type=8 bw=48 hops=4
+      const srcId = 'gpu-'+parseInt(d.gpu);
+      const dstId = 'gpu-'+parseInt(d.peer);
+      const pathTypes = ['LOC','NVL','NVB','C2C','PIX','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const lbl = pathTypes[parseInt(d.type)] || 'T'+d.type;
+      topo.addNode(srcId, 'gpu', 'GPU '+d.gpu, {});
+      topo.addNode(dstId, 'gpu', 'GPU '+d.peer, {});
+      topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops});
+      topo.discoverNode(srcId);
+      topo.discoverNode(dstId);
+      topo.markEdge(srcId, dstId);
+      break;
+    }
+    case 'search_channel': {
+      // [SEARCH] channel nChannels=1 pattern=4 bwIntra=40 nHops=36
+      const patterns = ['RING','TREE','NVLS','P2P','SPLIT_TREE','BALANCED_TREE','COLLNET_TREE','COLLNET_DIRECT'];
+      const patName = patterns[parseInt(d.pattern)] || 'P'+d.pattern;
+      const info = 'Channel #'+d.nChannels+'\npattern='+patName+'\nbwIntra='+d.bwIntra+' GB/s\nnHops='+d.nHops;
+      // Add a marker node for channel completion
+      const chId = 'channel-'+d.nChannels;
+      topo.addNode(chId, 'rank', 'Ch'+d.nChannels+' '+patName, {detail:info, channelNum:parseInt(d.nChannels)});
+      topo.discoverNode(chId);
+      break;
+    }
+    case 'search_other':
+      break;
     case 'topo_other':
       break;
   }

@@ -645,11 +645,6 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
   }
   graph->intra[graph->nChannels * ngpus + step] = gpu->gpu.rank;
   int g = gpu - system->nodes[GPU].nodes;
-  // Only log first few steps of each channel to avoid flooding
-  if (step < 3) {
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_step step=%d gpu_dev=%d gpu_rank=%d channel=%d",
-             step, g, gpu->gpu.rank, graph->nChannels);
-  }
   int nets[NCCL_TOPO_MAX_NODES];
   if (step == backToNet) {
     // first get back to NIC

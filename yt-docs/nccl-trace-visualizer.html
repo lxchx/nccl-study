@@ -159,6 +159,7 @@ function parse(l) {
     } else if (d.gpu !== undefined && d.peer !== undefined) t = 'gpu_matrix';
     else t = 'topo_other';
   }
+  if (t==='gpu_matrix') t='src'; // skip from step index as it's final state
   return { rank:parseInt(m[1]), phase:m[2], type:t, data:d, raw:l };
 }
 
@@ -232,9 +233,18 @@ function buildChapters(pl, allLineIdx) {
   
   return CHAPTER_DEFS.map((def, ci) => {
     const lineIdx = [];
+    const seen = new Set();
     allLineIdx.forEach((idx, ai) => {
       const p = allParsed[ai];
-      if (p && def.phases.includes(p.phase)) lineIdx.push(idx);
+      if (!p || !def.phases.includes(p.phase)) return;
+      // Dedup: group duplicates by normalized trace content
+      const key = p.phase + '|' + p.type + '|' + Object.entries(p.data).sort().map(([k,v])=>k+'='+v).join(' ');
+      if (def.phases.length === 1 && def.phases[0] !== 'SCAN') {
+        // For single-phase chapters, dedup identical traces across ranks
+        if (seen.has(key)) return;
+        seen.add(key);
+      }
+      lineIdx.push(idx);
     });
     
     const ch = {

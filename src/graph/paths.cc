@@ -109,17 +109,6 @@ static ncclResult_t ncclTopoSetPaths(struct ncclTopoNode* baseNode, struct ncclT
                  remNode->nlinks, node->type, node->id);
             return ncclInternalError;
           }
-          // YT-TRACE: when a GPU discovers a new node in BFS (before updating remPath)
-          if (baseNode->type == GPU && remPath->type == PATH_DIS) {
-            char _desc[64];
-            if (remNode->type == GPU)
-              snprintf(_desc, sizeof(_desc), "gpu=%d peer=%d", baseNode->gpu.dev, remNode->gpu.dev);
-            else
-              snprintf(_desc, sizeof(_desc), "gpu=%d to_type=%d to_id=0x%lx", baseNode->gpu.dev, remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id));
-            YT_TRACE(NCCL_GRAPH, "[TOPO] path link=%d bw=%.0f hops=%d %s",
-                     link->type, bw, path->count+1, _desc);
-          }
-
           // Copy the rest of the path
           for (int i = 0; i < path->count; i++) remPath->list[i + 1] = path->list[i];
           remPath->count = path->count + 1;
@@ -873,14 +862,6 @@ ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm
     NCCLCHECK(ncclTopoGetLocalGpu(system, net->id, &net->net.localGpu));
   }
 
-  // YT-TRACE: final GPU→GPU path matrix
-  for (int g = 0; g < system->nodes[GPU].count; g++) {
-    for (int p = g+1; p < system->nodes[GPU].count; p++) {
-      struct ncclTopoLinkList* path = system->nodes[GPU].nodes[g].paths[GPU] + p;
-      YT_TRACE(NCCL_GRAPH, "[TOPO] gpu_matrix gpu=%d peer=%d type=%d bw=%.0f hops=%d",
-               g, p, path->type, path->bw, path->count);
-    }
-  }
   return ncclSuccess;
 }
 

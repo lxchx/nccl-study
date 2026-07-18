@@ -180,6 +180,16 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
   link->remNode = remNode;
   link->bw += bw;
 
+  // YT-TRACE: physical link established
+  {
+    int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
+    int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
+    YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f",
+             node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),
+             remNode->type, to_dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id),
+             type, bw);
+  }
+
   // Sort links in BW descending order
   struct ncclTopoLink linkSave;
   memcpy(&linkSave, link, sizeof(struct ncclTopoLink));

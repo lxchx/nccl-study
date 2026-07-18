@@ -153,13 +153,9 @@ function parse(l) {
   if (t==='scan') { if (d.dev!==undefined) t='gpu'; else if (d.numa!==undefined) t='cpu'; else if (d.busid!==undefined) t='pci'; }
   else if (t==='rank') t='rank'; else if (t==='src') t='src';
   else if (t==='topo') {
-    if (d.link !== undefined && d.hops !== undefined && d.gpu !== undefined) {
-      if (d.peer !== undefined) t = 'gpu_link';
-      else t = 'gpu_path';
-    } else if (d.gpu !== undefined && d.peer !== undefined) t = 'gpu_matrix';
+    if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
     else t = 'topo_other';
   }
-  if (t==='gpu_matrix') t='src'; // skip from step index as it's final state
   return { rank:parseInt(m[1]), phase:m[2], type:t, data:d, raw:l };
 }
 
@@ -522,43 +518,26 @@ function proc(p, topo) {
       }
       break;
     }
-    case 'gpu_path':
-    case 'gpu_link': {
-      // [TOPO] path ... gpu=N (peer=M | to_type=T to_id=...)
-      const srcId = 'gpu-' + parseInt(d.gpu);
-      const linkNames = ['LOC','NVL','NVB','C2C','PCI','PXB','PHB','SYS','NET','DIS'];
-      const lbl = linkNames[parseInt(d.link)] || 'L'+d.link;
-      topo.addNode(srcId, 'gpu', 'GPU '+parseInt(d.gpu), {});
-      topo.discoverNode(srcId);
-      if (d.peer !== undefined) {
-        const dstId = 'gpu-' + parseInt(d.peer);
-        topo.addNode(dstId, 'gpu', 'GPU '+parseInt(d.peer), {});
-        topo.discoverNode(dstId);
-        topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB');
-        topo.markEdge(srcId, dstId);
-      } else if (d.to_type !== undefined) {
-        const dstId = 't'+d.to_type+'-'+d.to_id;
-        const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
-        const tname = typeNames[parseInt(d.to_type)] || 'T'+d.to_type;
-        topo.addNode(dstId, 'pci', tname+' 0x'+d.to_id.slice(-4), {detail:'type='+tname+'\nid=0x'+d.to_id});
-        topo.discoverNode(dstId);
-        topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB');
-        topo.markEdge(srcId, dstId);
-      }
-      break;
-    }
-    case 'gpu_matrix': {
-      // [TOPO] gpu_matrix gpu=N peer=P type=T bw=... hops=H
-      const gpuId = 'gpu-' + parseInt(d.gpu);
-      const peerId = 'gpu-' + parseInt(d.peer);
-      const pathTypes = ['LOC','NVL','NVB','C2C','PCI','PXB','PHB','SYS','NET','DIS','PXN','P2C'];
-      const typeLabel = pathTypes[parseInt(d.type)] || 't'+d.type;
-      topo.addNode(gpuId, 'gpu', 'GPU '+parseInt(d.gpu), {});
-      topo.addNode(peerId, 'gpu', 'GPU '+parseInt(d.peer), {});
-      topo.addEdge(gpuId, peerId, typeLabel+' '+d.bw+'GB');
-      topo.discoverNode(gpuId);
-      topo.discoverNode(peerId);
-      topo.markEdge(gpuId, peerId);
+    case 'topo_link': {
+      // [TOPO] link from_type=0 from_dev=3 from_id=0x... to_type=1 to_dev=-1 to_id=0x... link_type=4 bw=48
+      const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+      const linkNames = ['LOC','NVL','NVB','C2C','PCI','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const fType = parseInt(d.from_type);
+      const tType = parseInt(d.to_type);
+      const fDev = parseInt(d.from_dev);
+      const tDev = parseInt(d.to_dev);
+      const lbl = linkNames[parseInt(d.link_type)] || 'L'+d.link_type;
+      // Map to visualizer node IDs: GPU uses 'gpu-{dev}', others use 'type-id'
+      const fId = fType===0 ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
+      const tId = tType===0 ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
+      const fName = fType===0 ? 'GPU '+fDev : (typeNames[fType]||'T'+fType)+' 0x'+d.from_id.slice(-4);
+      const tName = tType===0 ? 'GPU '+tDev : (typeNames[tType]||'T'+tType)+' 0x'+d.to_id.slice(-4);
+      topo.addNode(fId, fType===0?'gpu':'pci', fName, {});
+      topo.addNode(tId, tType===0?'gpu':'pci', tName, {});
+      topo.addEdge(fId, tId, lbl+' '+d.bw+'GB');
+      topo.discoverNode(fId);
+      topo.discoverNode(tId);
+      topo.markEdge(fId, tId);
       break;
     }
     case 'topo_other':

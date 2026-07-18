@@ -181,6 +181,9 @@ function parse(l) {
     else if (d._label === 'bfs_dequeue') t = 'bfs_dequeue';
     else if (d._label === 'bfs_enqueue') t = 'bfs_enqueue';
     else if (d._label === 'bfs_improve') t = 'bfs_improve';
+    else if (d._label === 'bfs_gpu_found') t = 'bfs_gpu_found';
+    else if (d._label === 'bfs_done') t = 'bfs_done';
+    else if (d._label === 'dfs_found') t = 'dfs_found';
     else if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
     else if (d.nChannels !== undefined) t = 'search_channel';
     else t = 'search_other';
@@ -838,14 +841,14 @@ function proc(p, topo) {
       topo.markEdge(srcId, dstId);
       break;
     }
-    case 'search_channel': {
-      // [SEARCH] channel nChannels=1 pattern=4 bwIntra=40 nHops=36
+    case 'search_channel':
+    case 'dfs_found': {
+      // [SEARCH] dfs_found channel=1 pattern=4 bwIntra=40 nHops=36
       const patterns = ['RING','TREE','NVLS','P2P','SPLIT_TREE','BALANCED_TREE','COLLNET_TREE','COLLNET_DIRECT'];
       const patName = patterns[parseInt(d.pattern)] || 'P'+d.pattern;
-      const info = 'Channel #'+d.nChannels+'\npattern='+patName+'\nbwIntra='+d.bwIntra+' GB/s\nnHops='+d.nHops;
-      // Add a marker node for channel completion
-      const chId = 'channel-'+d.nChannels;
-      topo.addNode(chId, 'rank', 'Ch'+d.nChannels+' '+patName, {detail:info, channelNum:parseInt(d.nChannels)});
+      const info = 'Channel #'+d.channel+'\npattern='+patName+'\nbwIntra='+d.bwIntra+' GB/s\nnHops='+d.nHops;
+      const chId = 'channel-'+d.channel;
+      topo.addNode(chId, 'rank', 'Ch'+d.channel+' '+patName, {detail:info, channelNum:parseInt(d.channel)});
       topo.discoverNode(chId);
       break;
     }

@@ -418,6 +418,85 @@ function getVisOptions(chIdx) {
   };
 }
 
+// Incremental vis update (no rebuild)
+function updateVis(ch) {
+  const { topo, visNodes, visEdges } = ch;
+  const isSearch = ch.def && ch.def.id === 'SEARCH';
+  const canvas = document.getElementById('topo-canvas');
+  
+  // If network doesn't exist yet, create it
+  if (!ch.network) {
+    visNodes.clear(); visEdges.clear();
+    // Add all discovered nodes
+    topo.nodes.forEach(n => {
+      if (!n.discovered) return;
+      const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+      let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+      if (isSearch && bfsState.sourceGpu !== null) {
+        if (n.id === 'gpu-'+bfsState.sourceGpu) { bg='#0e4429'; border='#3fb950'; borderWidth=5; fontColor='#3fb950'; }
+        else if (bfsState.currentNode === n.id) { bg='#0c2d6b'; border='#58a6ff'; borderWidth=5; fontColor='#58a6ff'; }
+        else if (bfsState.queue.includes(n.id)) { bg='#3d2e00'; border='#d29922'; borderWidth=4; fontColor='#d29922'; }
+      }
+      let label = n.label;
+      if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
+      visNodes.add({ id:n.id, label:label, level:nodeLevel(n.type), opacity:1.0,
+        color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
+        title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined });
+    });
+    // Add all discovered edges
+    topo.edges.forEach(e => {
+      if (!e.discovered) return;
+      let ec='#3fb950', ew=2, ed=false;
+      if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
+      visEdges.add({ from:e.from, to:e.to, label:e.label||undefined,
+        color:{color:ec}, width:ew, dashes:ed,
+        title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined });
+    });
+    ch.network = new vis.Network(canvas, {nodes:visNodes, edges:visEdges}, getVisOptions(curCh));
+    ch.network.fit({animation:false});
+    return;
+  }
+  
+  // Update existing nodes
+  const existingNodes = new Set(visNodes.getIds());
+  topo.nodes.forEach(n => {
+    if (!n.discovered) { if (existingNodes.has(n.id)) visNodes.remove(n.id); return; }
+    const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+    let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+    if (isSearch && bfsState.sourceGpu !== null) {
+      if (n.id === 'gpu-'+bfsState.sourceGpu) { bg='#0e4429'; border='#3fb950'; borderWidth=5; fontColor='#3fb950'; }
+      else if (bfsState.currentNode === n.id) { bg='#0c2d6b'; border='#58a6ff'; borderWidth=5; fontColor='#58a6ff'; }
+      else if (bfsState.queue.includes(n.id)) { bg='#3d2e00'; border='#d29922'; borderWidth=4; fontColor='#d29922'; }
+    }
+    let label = n.label;
+    if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
+    const nodeData = { id:n.id, label:label, level:nodeLevel(n.type), opacity:1.0,
+      color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
+      title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined };
+    if (existingNodes.has(n.id)) visNodes.update(nodeData); else visNodes.add(nodeData);
+  });
+  // Remove nodes no longer discovered
+  existingNodes.forEach(id => {
+    if (!topo.nodes.has(id) || !topo.nodes.get(id).discovered) visNodes.remove(id);
+  });
+  // Update edges
+  const existingEdges = new Set(visEdges.getIds());
+  const edgeIds = new Set();
+  topo.edges.forEach(e => {
+    if (!e.discovered) return;
+    let ec='#3fb950', ew=2, ed=false;
+    if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
+    const eid = e.from+'-'+e.to;
+    edgeIds.add(eid);
+    const edgeData = { id:eid, from:e.from, to:e.to, label:e.label||undefined,
+      color:{color:ec}, width:ew, dashes:ed,
+      title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined };
+    if (existingEdges.has(eid)) visEdges.update(edgeData); else visEdges.add(edgeData);
+  });
+  existingEdges.forEach(id => { if (!edgeIds.has(id)) visEdges.remove(id); });
+  ch.network.fit({animation:false});
+}
+
 // ═══ BFS State (for Chapter 3 Part 1) ═══
 let bfsState = {
   sourceGpu: null,
@@ -494,6 +573,10 @@ function initChapters(rawLog) {
 // ═══ Chapter Navigation ═══
 function switchChapter(chIdx) {
   if (chIdx < 0 || chIdx >= chapters.length) return;
+  
+  // Destroy current network before switching
+  const oldCh = chapters[curCh];
+  if (oldCh && oldCh.network) { try { oldCh.network.destroy(); } catch(e){} oldCh.network = null; }
   
   const ch = chapters[chIdx];
   
@@ -578,16 +661,8 @@ function go(s) {
     if (p) proc(p, ch.topo);
   }
   
-  // Render
-  buildVis(ch);
-  const canvas = document.getElementById('topo-canvas');
-  if (ch.network) {
-    try { ch.network.destroy(); } catch(e){}
-    ch.network = null;
-  }
-  canvas.innerHTML = '';
-  ch.network = new vis.Network(canvas, { nodes: ch.visNodes, edges: ch.visEdges }, getVisOptions(curCh));
-  ch.network.fit({ animation: false });
+  // Render incrementally
+  updateVis(ch);
   
   // Log
   showLog();

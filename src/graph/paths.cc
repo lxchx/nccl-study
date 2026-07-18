@@ -862,6 +862,18 @@ ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm
     NCCLCHECK(ncclTopoGetLocalGpu(system, net->id, &net->net.localGpu));
   }
 
+  // YT-TRACE: simplified GPU-to-GPU path matrix (Chapter 3 input)
+  for (int g = 0; g < system->nodes[GPU].count; g++) {
+    for (int p = g+1; p < system->nodes[GPU].count; p++) {
+      struct ncclTopoLinkList* path = system->nodes[GPU].nodes[g].paths[GPU] + p;
+      if (path->count > 0) {
+        YT_TRACE(NCCL_GRAPH, "[SEARCH] gpu_path gpu=%d peer=%d type=%d bw=%.0f hops=%d",
+                 system->nodes[GPU].nodes[g].gpu.rank,
+                 system->nodes[GPU].nodes[p].gpu.rank,
+                 path->type, path->bw, path->count);
+      }
+    }
+  }
   return ncclSuccess;
 }
 

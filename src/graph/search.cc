@@ -361,12 +361,6 @@ ncclResult_t ncclTopoSearchTryGpu(struct ncclTopoSystem* system, struct ncclTopo
   const uint64_t flag = 1ULL << (graph->nChannels);
   struct ncclTopoNode* gpu;
   NCCLCHECK(ncclTopoFollowPath(system, graph, type, index, GPU, g, 1, &gpu));
-  // YT-TRACE: try connecting to GPU (only for GPU→GPU)
-  if (type == GPU) {
-    struct ncclTopoNode* srcNode = system->nodes[GPU].nodes + index;
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] try from=%d to=%d step=%d nChannels=%d ok=%d",
-             srcNode->gpu.rank, system->nodes[GPU].nodes[g].gpu.rank, step, graph->nChannels, gpu!=NULL?1:0);
-  }
   if (gpu) {
     gpu->used ^= flag;
     NCCLCHECK(ncclTopoSearchRecGpu(system, graph, saveGraph, gpu, step, backToNet, backToFirstRank, forcedOrder, time));
@@ -859,9 +853,6 @@ ncclResult_t ncclTopoSearchRec(struct ncclTopoSystem* system, struct ncclTopoGra
                                struct ncclTopoGraph* saveGraph, int* time) {
   int backToNet, backToFirstRank;
   NCCLCHECK(ncclTopoSearchParams(system, graph->pattern, &backToNet, &backToFirstRank));
-  // YT-TRACE: search phase start
-  YT_TRACE(NCCL_GRAPH, "[SEARCH] start nChannels=%d pattern=%d maxChannels=%d",
-           graph->nChannels, graph->pattern, graph->maxChannels);
   if (system->inter) {
     // Start from NET
     ncclTopoSearchRecNet(system, graph, saveGraph, backToNet, backToFirstRank, time);

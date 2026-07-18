@@ -533,10 +533,11 @@ function proc(p, topo) {
       const t = parseInt(d.from_type);
       const id = d.from_id;
       const dev = parseInt(d.from_dev);
-      const nodeId = t===0 ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
-      const label = t===0 ? 'GPU '+dev : (typeNames[t]||'T'+t)+' 0x'+id.slice(-4);
+      const isGpu = t===0 && !isNaN(dev) && dev>=0;
+      const nodeId = isGpu ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
+      const label = isGpu ? 'GPU '+dev : (typeNames[t]||'T'+t)+' 0x'+id.slice(-4);
       const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
-      topo.addNode(nodeId, t===0?'gpu':'pci', label, {detail});
+      topo.addNode(nodeId, isGpu?'gpu':'pci', label, {detail});
       topo.discoverNode(nodeId);
       break;
     }
@@ -548,14 +549,16 @@ function proc(p, topo) {
       const tType = parseInt(d.to_type);
       const fDev = parseInt(d.from_dev);
       const tDev = parseInt(d.to_dev);
+      const fIsGpu = fType===0 && !isNaN(fDev) && fDev>=0;
+      const tIsGpu = tType===0 && !isNaN(tDev) && tDev>=0;
       const lbl = linkNames[parseInt(d.link_type)] || 'L'+d.link_type;
-      const fId = fType===0 ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
-      const tId = tType===0 ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
-      const fName = fType===0 ? 'GPU '+fDev : (typeNames[fType]||'T'+fType)+' 0x'+d.from_id.slice(-4);
-      const tName = tType===0 ? 'GPU '+tDev : (typeNames[tType]||'T'+tType)+' 0x'+d.to_id.slice(-4);
+      const fId = fIsGpu ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
+      const tId = tIsGpu ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
+      const fName = fIsGpu ? 'GPU '+fDev : (typeNames[fType]||'T'+fType)+' 0x'+d.from_id.slice(-4);
+      const tName = tIsGpu ? 'GPU '+tDev : (typeNames[tType]||'T'+tType)+' 0x'+d.to_id.slice(-4);
       const detail = 'link_type='+linkNames[parseInt(d.link_type)]+'\nbw='+d.bw+' GB/s\ntotal_bw='+d.total_bw+' GB/s\nfrom='+fName+'\nto='+tName;
-      topo.addNode(fId, fType===0?'gpu':'pci', fName, {});
-      topo.addNode(tId, tType===0?'gpu':'pci', tName, {});
+      topo.addNode(fId, fIsGpu?'gpu':'pci', fName, {});
+      topo.addNode(tId, tIsGpu?'gpu':'pci', tName, {});
       topo.addEdge(fId, tId, lbl+' '+d.bw+'GB', {detail});
       topo.discoverNode(fId);
       topo.discoverNode(tId);

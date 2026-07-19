@@ -528,6 +528,8 @@ ncclResult_t ncclTopoAddGpu(struct ncclXmlNode* xmlGpu, struct ncclTopoSystem* s
   NCCLCHECK(xmlGetAttrInt(xmlGpu, "dev", &gpu->gpu.dev));
   NCCLCHECK(xmlGetAttrInt(xmlGpu, "gdr", &gpu->gpu.gdrSupport));
   NCCLCHECK(xmlGetAttrIntDefault(xmlGpu, "mlopart", &gpu->gpu.mloPart, NCCL_TOPO_UNDEF));
+  // Log GPU info with device number and hex ID (after dev is set)
+  YT_TRACE(NCCL_GRAPH, "[TOPO] gpu dev=%d id=0x%lx rank=%d cc=%d gdr=%d", gpu->gpu.dev, NCCL_TOPO_ID_LOCAL_ID(gpu->id), gpu->gpu.rank, gpu->gpu.cudaCompCap, gpu->gpu.gdrSupport);
   // Do not go any further, nvlinks will be added in a second pass
   return ncclSuccess;
 }

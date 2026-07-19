@@ -1093,6 +1093,7 @@ function proc(p, topo) {
       // Remove old edges between these GPUs if any, add new simplified edge
       topo.edges = topo.edges.filter(e => !((e.from===srcId&&e.to===dstId)||(e.from===dstId&&e.to===srcId)));
       topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops, simplified:true});
+      topo.markEdge(srcId, dstId);  // Discover the simplified edge
       bfsState.simplifiedEdges.push({from:srcId, to:dstId, type:lbl, bw:parseFloat(d.bw), hops:parseInt(d.hops)});
       break;
     }

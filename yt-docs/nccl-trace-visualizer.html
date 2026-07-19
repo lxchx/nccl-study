@@ -45,6 +45,7 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
 .btn-group button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
 .btn-group button.primary:hover{background:#388bfd}
 #topo-canvas{flex:1;position:relative;overflow:hidden;background:#0d1117}
+#topo-wrapper{position:relative;flex:1;overflow:hidden}
 #legend{position:absolute;bottom:40px;left:10px;background:rgba(13,17,23,0.9);border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:10px;z-index:100}
 #legend .legend-item{display:flex;align-items:center;gap:6px;margin:3px 0}
 #legend .legend-color{width:12px;height:12px;border-radius:2px;border:2px solid}
@@ -91,6 +92,7 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
     <button id="btn-auto" title="Auto play (a)">▶▶</button>
   </div>
 </div>
+<div id="topo-wrapper">
 <div id="topo-canvas"></div>
 <div id="legend" style="display:none">
   <div style="font-weight:600;margin-bottom:4px;color:#c9d1d9">图例</div>
@@ -100,6 +102,7 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
   <div class="legend-item"><div class="legend-line" style="background:#ffd700"></div><span>简化边 (Simplified Edge)</span></div>
   <div class="legend-item"><div class="legend-line" style="background:#8b949e;border-top:2px dashed #8b949e;height:0"></div><span>最短路径树 (Prev)</span></div>
   <div class="legend-item"><div class="legend-line" style="background:#3fb950"></div><span>物理拓扑 (Physical)</span></div>
+</div>
 </div>
 <div id="status-bar">
   <span class="stat"><span class="stat-label">Nodes:</span><span class="stat-value" id="stat-nodes">0</span></span>

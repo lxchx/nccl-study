@@ -438,28 +438,28 @@ function getVisOptions(chIdx) {
 
 // Dagre layout: minimizes edge crossings with proper layered positioning
 function dagreLayout(topo, nodeLevel) {
-  if (typeof dagre === 'undefined') return;
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 120, marginx: 20, marginy: 20, acyclic: 'greedy' });
-  g.setDefaultEdgeLabel(() => ({}));
-  // Add nodes with rank (level)
+  // Manual layered layout: guaranteed correct hierarchy
+  const levels = {};
   topo.nodes.forEach((n) => {
     const level = nodeLevel(n.type);
-    g.setNode(n.id, { width: 120, height: 40, rank: level });
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(n.id);
   });
-  // Add edges
-  topo.edges.forEach(e => {
-    if (topo.nodes.has(e.from) && topo.nodes.has(e.to)) {
-      g.setEdge(e.from, e.to);
-    }
-  });
-  // Run dagre layout
-  dagre.layout(g);
-  // Apply computed positions to topo nodes
-  g.nodes().forEach(id => {
-    const n = topo.nodes.get(id);
-    const pos = g.node(id);
-    if (n && pos) { n.x = pos.x; n.y = pos.y; }
+  // Position: y based on level, x evenly spaced within level
+  const levelSpacing = 150;
+  const nodeSpacing = 160;
+  const startY = 60;
+  Object.keys(levels).sort((a,b) => a-b).forEach(level => {
+    const nodes = levels[level];
+    const totalWidth = (nodes.length - 1) * nodeSpacing;
+    const startX = -totalWidth / 2;
+    nodes.forEach((id, i) => {
+      const n = topo.nodes.get(id);
+      if (n) {
+        n.x = startX + i * nodeSpacing;
+        n.y = startY + level * levelSpacing;
+      }
+    });
   });
 }
 
@@ -833,7 +833,8 @@ function proc(p, topo) {
         label = (typeNames[t]||'T'+t)+'\n0x'+id.slice(-4);
       }
       const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
-      topo.addNode(nodeId, isGpu?'gpu':'pci', label, {detail});
+      const nodeType = isGpu ? 'gpu' : (typeNames[t]||'pci').toLowerCase();
+      topo.addNode(nodeId, nodeType, label, {detail});
       topo.discoverNode(nodeId);
       // Store mapping: node_type:node_id -> topoId (for BFS traces)
       NODE_ID_MAP[t+':'+id] = nodeId;
@@ -867,8 +868,10 @@ function proc(p, topo) {
       const fName = topoName(fType, fDev, d.from_id);
       const tName = topoName(tType, tDev, d.to_id);
       const detail = 'link_type='+linkNames[parseInt(d.link_type)]+'\nbw='+d.bw+' GB/s\ntotal_bw='+d.total_bw+' GB/s\nfrom='+fName+'\nto='+tName;
-      topo.addNode(fId, fIsGpu?'gpu':'pci', fName, {});
-      topo.addNode(tId, tIsGpu?'gpu':'pci', tName, {});
+      const fTypeStr = fIsGpu ? 'gpu' : (typeNames[fType]||'pci').toLowerCase();
+      const tTypeStr = tIsGpu ? 'gpu' : (typeNames[tType]||'pci').toLowerCase();
+      topo.addNode(fId, fTypeStr, fName, {});
+      topo.addNode(tId, tTypeStr, tName, {});
       topo.addEdge(fId, tId, lbl+' '+d.bw+'GB', {detail});
       topo.discoverNode(fId);
       topo.discoverNode(tId);
@@ -905,7 +908,8 @@ function proc(p, topo) {
         const isGpu = nodeType === 0;
         const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
         const typeName = typeNames[nodeType] || 'T'+nodeType;
-        topo.addNode(topoId, isGpu?'gpu':'pci', (isGpu?'GPU ':(typeName+' 0x'))+nodeId.slice(-4), {});
+        const nodeTypeStr = isGpu ? 'gpu' : typeName.toLowerCase();
+        topo.addNode(topoId, nodeTypeStr, (isGpu?'GPU ':(typeName+' 0x'))+nodeId.slice(-4), {});
       }
       topo.discoverNode(topoId);
       if (!bfsState.queue.includes(topoId)) bfsState.queue.push(topoId);

@@ -807,11 +807,11 @@ function proc(p, topo) {
       break;
     }
     case 'topo_node': {
-      // [TOPO] node from_type=0 from_id=0x... from_dev=3 from_rank=3 from_cc=120 from_gdr=0 from_nlinks=3
+      // [TOPO] node type=0 id=0x... dev=3 rank=3 cc=120 gdr=0 nlinks=3
       const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
-      const t = parseInt(d.from_type);
-      const id = d.from_id;
-      const dev = parseInt(d.from_dev);
+      const t = parseInt(d.type);
+      const id = d.id;
+      const dev = parseInt(d.dev);
       const isGpu = t===0 && !isNaN(dev) && dev>=0;
       let nodeId = isGpu ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
       // Map cpu-0xN to numa-N (reuse existing NUMA node IDs)
@@ -832,7 +832,7 @@ function proc(p, topo) {
       } else {
         label = (typeNames[t]||'T'+t)+'\n0x'+id.slice(-4);
       }
-      const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
+      const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.dev+'\nrank='+d.rank+'\ncc='+d.cc+'\ngdr='+d.gdr+'\nnlinks='+d.nlinks;
       const nodeType = isGpu ? 'gpu' : (typeNames[t]||'pci').toLowerCase();
       topo.addNode(nodeId, nodeType, label, {detail});
       topo.discoverNode(nodeId);

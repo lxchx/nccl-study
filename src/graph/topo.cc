@@ -193,9 +193,9 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
     int from_nlinks = node->nlinks;
     int to_nlinks = remNode->nlinks;
     float final_bw = link->bw;
-    YT_TRACE(NCCL_GRAPH, "[TOPO] node from_type=%d from_id=0x%lx from_dev=%d from_rank=%d from_cc=%d from_gdr=%d from_nlinks=%d",
+    YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
              node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), from_dev, from_rank, from_cc, from_gdr, from_nlinks);
-    YT_TRACE(NCCL_GRAPH, "[TOPO] node to_type=%d to_id=0x%lx to_dev=%d to_rank=%d to_cc=%d to_gdr=%d to_nlinks=%d",
+    YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
              remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), to_dev, to_rank, to_cc, to_gdr, to_nlinks);
     YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f total_bw=%.0f",
              node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),

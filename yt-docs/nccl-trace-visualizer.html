@@ -179,7 +179,10 @@ function parse(l) {
   if (t==='scan') { if (d.dev!==undefined) t='gpu'; else if (d.numa!==undefined) t='cpu'; else if (d.busid!==undefined) t='pci'; }
   else if (t==='rank') t='rank'; else if (t==='src') t='src';
   else if (t==='topo') {
-    if (d.from_type !== undefined && d.from_dev !== undefined && d.to_type === undefined) t = 'topo_node';
+    // New format: [TOPO] node type=8 id=0x... cc=... nlinks=...
+    if (d.type !== undefined && d.id !== undefined && d.from_type === undefined) t = 'topo_node';
+    // Old format: [TOPO] node from_type=8 from_id=0x... from_dev=-1 ...
+    else if (d.from_type !== undefined && d.from_dev !== undefined && d.to_type === undefined) t = 'topo_node';
     else if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
     else t = 'topo_other';
   }

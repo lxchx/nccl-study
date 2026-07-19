@@ -7,6 +7,7 @@
 <!-- vis-network for auto layout -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/dist/vis-network.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',monospace;background:#0d1117;color:#c9d1d9;height:100vh;overflow:hidden}
@@ -323,9 +324,21 @@ const NODE_COLORS = {
 };
 
 function nodeLevel(type) {
-  // Layer: NUMA/CPU=0, NVS/CXB=1, DEV=2, PCI=3, GPU=4, NIC/NET=5
-  const m = {'cpu':0,'nvs':1,'cxb':1,'dev':2,'pci':3,'gpu':4,'nic':5,'net':5,'gin':5,'rma':5,'rank':4};
-  return m[type] !== undefined ? m[type] : 3;
+  // Each hardware type gets its own level for clear separation
+  const m = {
+    'cpu': 0,    // CPU root complex (top)
+    'nvs': 1,    // NVSwitch
+    'cxb': 1,    // CXL Bridge
+    'dev': 2,    // Device/bridge
+    'pci': 3,    // PCIe switch/port
+    'gpu': 4,    // GPU
+    'nic': 5,    // NIC
+    'net': 5,    // Network
+    'gin': 6,    // GIN
+    'rma': 6,    // RMA
+    'rank': 4    // Rank marker
+  };
+  return m[type] !== undefined ? m[type] : 2;
 }
 
 function buildVis(ch) {
@@ -411,27 +424,42 @@ function buildVis(ch) {
 // Physics-based layout for non-tree chapters
 function getVisOptions(chIdx) {
   if (chIdx === 0) {
-    // SCAN: hierarchical tree
+    // SCAN: hierarchical tree (vis-network)
     return { ...visOptions, layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } } };
   }
-  // TOPO and beyond: hierarchical with edge minimization
+  // TOPO and beyond: no layout (dagre handles positioning)
   return { ...visOptions,
-    layout: {
-      hierarchical: {
-        enabled: true,
-        direction: 'UD',
-        sortMethod: 'directed',
-        levelSeparation: 120,
-        nodeSpacing: 80,
-        treeSpacing: 100,
-        blockShifting: true,
-        edgeMinimization: true,
-        parentCentralization: true
-      }
-    },
+    layout: { hierarchical: false },
     physics: { enabled: false },
     interaction: { hover:true, zoomView:true, dragView:true, selectable:false, navigationButtons:false }
   };
+}
+
+// Dagre layout: minimizes edge crossings with proper layered positioning
+function dagreLayout(topo, nodeLevel) {
+  if (typeof dagre === 'undefined') return;
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 120, marginx: 20, marginy: 20, acyclic: 'greedy' });
+  g.setDefaultEdgeLabel(() => ({}));
+  // Add nodes with rank (level)
+  topo.nodes.forEach((n) => {
+    const level = nodeLevel(n.type);
+    g.setNode(n.id, { width: 120, height: 40, rank: level });
+  });
+  // Add edges
+  topo.edges.forEach(e => {
+    if (topo.nodes.has(e.from) && topo.nodes.has(e.to)) {
+      g.setEdge(e.from, e.to);
+    }
+  });
+  // Run dagre layout
+  dagre.layout(g);
+  // Apply computed positions to topo nodes
+  g.nodes().forEach(id => {
+    const n = topo.nodes.get(id);
+    const pos = g.node(id);
+    if (n && pos) { n.x = pos.x; n.y = pos.y; }
+  });
 }
 
 // Incremental vis update (no rebuild)
@@ -439,10 +467,15 @@ function updateVis(ch) {
   const { topo, visNodes, visEdges } = ch;
   const isSearch = ch.def && ch.def.id === 'SEARCH';
   const canvas = document.getElementById('topo-canvas');
+  const chIdx = chapters.indexOf(ch);
   
   // If network doesn't exist yet, create it
   if (!ch.network) {
     visNodes.clear(); visEdges.clear();
+    // Run dagre layout for TOPO/SEARCH chapters
+    if (chIdx > 0 && typeof dagre !== 'undefined') {
+      dagreLayout(topo, nodeLevel);
+    }
     // Add all discovered nodes
     topo.nodes.forEach(n => {
       if (!n.discovered) return;
@@ -455,7 +488,9 @@ function updateVis(ch) {
       }
       let label = n.label;
       if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
-      visNodes.add({ id:n.id, label:label, level:nodeLevel(n.type), opacity:1.0,
+      // Use dagre-computed position if available
+      const pos = (chIdx > 0 && n.x !== undefined) ? {x: n.x, y: n.y} : {};
+      visNodes.add({ id:n.id, label:label, ...pos, opacity:1.0,
         color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
         title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined });
     });

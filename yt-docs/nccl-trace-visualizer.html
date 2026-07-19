@@ -537,13 +537,13 @@ function updateVis(ch) {
   const canvas = document.getElementById('topo-canvas');
   const chIdx = chapters.indexOf(ch);
   
+  // Run dagre layout for TOPO/SEARCH chapters
+  if (chIdx > 0 && typeof dagre !== 'undefined') {
+    dagreLayout(topo, nodeLevel);
+  }
   // If network doesn't exist yet, create it
   if (!ch.network) {
     visNodes.clear(); visEdges.clear();
-    // Run dagre layout for TOPO/SEARCH chapters
-    if (chIdx > 0 && typeof dagre !== 'undefined') {
-      dagreLayout(topo, nodeLevel);
-    }
     // Add all discovered nodes
     topo.nodes.forEach(n => {
       if (!n.discovered) return;

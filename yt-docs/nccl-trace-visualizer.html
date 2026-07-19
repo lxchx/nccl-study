@@ -861,13 +861,10 @@ function proc(p, topo) {
 
 // ═══ Log display ═══
 // Track if user is manually scrolling
-let userScrolling = false;
-let userScrollTimer = null;
+let userScrolled = false;
 
 document.getElementById('log-stream').addEventListener('scroll', function() {
-  userScrolling = true;
-  clearTimeout(userScrollTimer);
-  userScrollTimer = setTimeout(() => { userScrolling = false; }, 2000);
+  userScrolled = true;
 });
 
 let logBuilt = false;
@@ -894,13 +891,21 @@ function buildLogWindow(centerIdx, range) {
   logBuilt = true;
 }
 
+function scrollToCenter() {
+  const el = document.getElementById('log-stream');
+  const cur = document.querySelector('.log-line.current');
+  if (!cur) return;
+  el.scrollTop = cur.offsetTop - el.clientHeight/2 + cur.offsetHeight/2;
+}
+
 function showLog() {
   const ch = chapters[curCh];
   const curLine = ch.step>=0 && ch.step<ch.lineIdx.length ? ch.lineIdx[ch.step] : -1;
   if (curLine < 0) return;
-  // Rebuild window if needed (every 30 lines or first time)
+  // Rebuild window if needed
   if (!logBuilt || Math.abs(curLine - logLastCenter) > 30) {
     buildLogWindow(curLine, 60);
+    userScrolled = false;
   }
   // Remove old current
   const old = document.querySelector('.log-line.current');
@@ -908,20 +913,13 @@ function showLog() {
   // Add new current
   if (logLineEls[curLine]) {
     logLineEls[curLine].classList.add('current');
-    if (!userScrolling) {
-      const el = document.getElementById('log-stream');
-      const lineEl = logLineEls[curLine];
-      const lineTop = lineEl.offsetTop;
-      const lineHeight = lineEl.offsetHeight;
-      const streamHeight = el.clientHeight;
-      el.scrollTop = lineTop - streamHeight/2 + lineHeight/2;
-    }
+    if (!userScrolled) scrollToCenter();
   }
 }
 
 // ═══ Event wiring ═══
-document.getElementById('btn-next').onclick = () => go(chapters[curCh].step + 1);
-document.getElementById('btn-prev').onclick = () => go(chapters[curCh].step - 1);
+document.getElementById('btn-next').onclick = () => { userScrolled = false; go(chapters[curCh].step + 1); };
+document.getElementById('btn-prev').onclick = () => { userScrolled = false; go(chapters[curCh].step - 1); };
 document.getElementById('btn-reset').onclick = () => { stopAuto(); go(-1); };
 document.getElementById('btn-auto').onclick = toggleAuto;
 document.getElementById('btn-ch-next').onclick = () => switchChapter(curCh + 1);

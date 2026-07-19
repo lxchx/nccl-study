@@ -452,7 +452,7 @@ function dagreLayout(topo, nodeLevel) {
   });
   // Position: y based on level, x evenly spaced within level
   // Alternating vertical offset: 0, +30, -30, +65, -65, +100, -100, ...
-  const levelSpacing = 200;  // Increased from 150
+  const baseLevelSpacing = 200;  // Base spacing between levels
   const nodeSpacing = 160;
   const startY = 60;
   // Smart level mapping: skip empty levels
@@ -465,18 +465,30 @@ function dagreLayout(topo, nodeLevel) {
     const magnitude = Math.ceil(i / 2);
     return sign * (30 * magnitude + 5 * (magnitude - 1));
   }
+  // Calculate max vertical offset for each level to determine adaptive spacing
+  const levelMaxOffset = {};
   usedLevels.forEach(level => {
     const nodes = levels[level];
-    const compressedLevel = levelMap[level];
+    let maxOffset = 0;
+    nodes.forEach((id, i) => { maxOffset = Math.max(maxOffset, Math.abs(getVerticalOffset(i))); });
+    levelMaxOffset[level] = maxOffset;
+  });
+  // Calculate Y position for each level with adaptive spacing
+  let currentY = startY;
+  usedLevels.forEach((level, idx) => {
+    const nodes = levels[level];
     const totalWidth = (nodes.length - 1) * nodeSpacing;
     const startX = -totalWidth / 2;
     nodes.forEach((id, i) => {
       const n = topo.nodes.get(id);
       if (n) {
         n.x = startX + i * nodeSpacing;
-        n.y = startY + compressedLevel * levelSpacing + getVerticalOffset(i);
+        n.y = currentY + getVerticalOffset(i);
       }
     });
+    // Adaptive spacing: only add extra if offset > base threshold
+    const extraSpacing = Math.max(0, levelMaxOffset[level] * 2 - baseLevelSpacing * 0.3);
+    currentY += baseLevelSpacing + extraSpacing;
   });
 }
 

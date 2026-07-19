@@ -114,7 +114,7 @@ RAW_LOG=[];
 // ═══ Chapter Definitions (edit to add new phases) ═══
 const CHAPTER_DEFS = [
   { id: 'SCAN',   label: '硬件扫描',         phases: ['SCAN','RANK'], dependsOn: -1 },
-  { id: 'TOPO',   label: '拓扑构建',         phases: ['TOPO'],        dependsOn: 0 },
+  { id: 'TOPO',   label: '拓扑构建',         phases: ['TOPO'],        dependsOn: -1 },
   { id: 'SEARCH', label: '最短路搜索',       phases: ['SEARCH'],      dependsOn: 1 },
   { id: 'CHANNEL',label: '信道分配',         phases: ['CHANNEL'],     dependsOn: 2 },
 ];
@@ -812,8 +812,25 @@ function proc(p, topo) {
       const id = d.from_id;
       const dev = parseInt(d.from_dev);
       const isGpu = t===0 && !isNaN(dev) && dev>=0;
-      const nodeId = isGpu ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
-      const label = isGpu ? 'GPU '+dev : (typeNames[t]||'T'+t)+' 0x'+id.slice(-4);
+      let nodeId = isGpu ? 'gpu-'+dev : (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
+      // Map cpu-0xN to numa-N (reuse existing NUMA node IDs)
+      if (t === 3 && !isGpu) {
+        const numaIdx = parseInt(id, 16);
+        if (!isNaN(numaIdx) && topo.nodes.has('numa-'+numaIdx)) {
+          nodeId = 'numa-'+numaIdx;  // Reuse existing NUMA node
+        }
+      }
+      // Descriptive labels
+      let label;
+      if (isGpu) {
+        label = 'GPU '+dev;
+      } else if (t === 3) {  // CPU/NUMA
+        label = 'NUMA '+parseInt(id,16);
+      } else if (t === 8) {  // DEV (PCIe bridge)
+        label = 'Bridge\n0x'+id.slice(-4);
+      } else {
+        label = (typeNames[t]||'T'+t)+'\n0x'+id.slice(-4);
+      }
       const detail = 'type='+typeNames[t]+'\nid=0x'+id+'\ndev='+d.from_dev+'\nrank='+d.from_rank+'\ncc='+d.from_cc+'\ngdr='+d.from_gdr+'\nnlinks='+d.from_nlinks;
       topo.addNode(nodeId, isGpu?'gpu':'pci', label, {detail});
       topo.discoverNode(nodeId);
@@ -832,10 +849,22 @@ function proc(p, topo) {
       const fIsGpu = fType===0 && !isNaN(fDev) && fDev>=0;
       const tIsGpu = tType===0 && !isNaN(tDev) && tDev>=0;
       const lbl = linkNames[parseInt(d.link_type)] || 'L'+d.link_type;
-      const fId = fIsGpu ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
-      const tId = tIsGpu ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
-      const fName = fIsGpu ? 'GPU '+fDev : (typeNames[fType]||'T'+fType)+' 0x'+d.from_id.slice(-4);
-      const tName = tIsGpu ? 'GPU '+tDev : (typeNames[tType]||'T'+tType)+' 0x'+d.to_id.slice(-4);
+      let fId = fIsGpu ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
+      let tId = tIsGpu ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
+      // Map cpu-0xN to numa-N
+      if (fType===3 && !fIsGpu) { const n=parseInt(d.from_id,16); if(!isNaN(n) && topo.nodes.has('numa-'+n)) fId='numa-'+n; }
+      if (tType===3 && !tIsGpu) { const n=parseInt(d.to_id,16); if(!isNaN(n) && topo.nodes.has('numa-'+n)) tId='numa-'+n; }
+      // Helper for descriptive names
+      function topoName(type, dev, id) {
+        if (type===0 && !isNaN(dev) && dev>=0) return 'GPU '+dev;
+        if (type===3) return 'NUMA '+parseInt(id,16);
+        if (type===8) return 'Bridge 0x'+id.slice(-4);
+        // Ensure id doesn't already start with 0x
+        const idStr = id.startsWith('0x') ? id : '0x'+id;
+        return (typeNames[type]||'T'+type)+' '+idStr;
+      }
+      const fName = topoName(fType, fDev, d.from_id);
+      const tName = topoName(tType, tDev, d.to_id);
       const detail = 'link_type='+linkNames[parseInt(d.link_type)]+'\nbw='+d.bw+' GB/s\ntotal_bw='+d.total_bw+' GB/s\nfrom='+fName+'\nto='+tName;
       topo.addNode(fId, fIsGpu?'gpu':'pci', fName, {});
       topo.addNode(tId, tIsGpu?'gpu':'pci', tName, {});

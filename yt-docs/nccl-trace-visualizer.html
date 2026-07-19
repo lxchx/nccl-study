@@ -452,24 +452,29 @@ function dagreLayout(topo, nodeLevel) {
   });
   // Position: y based on level, x evenly spaced within level
   // Alternating vertical offset: 0, +30, -30, +65, -65, +100, -100, ...
-  const levelSpacing = 150;
+  const levelSpacing = 200;  // Increased from 150
   const nodeSpacing = 160;
   const startY = 60;
+  // Smart level mapping: skip empty levels
+  const usedLevels = Object.keys(levels).sort((a,b) => a-b).map(Number);
+  const levelMap = {};  // original level → compressed level
+  usedLevels.forEach((lvl, i) => { levelMap[lvl] = i; });
   function getVerticalOffset(i) {
     if (i === 0) return 0;
     const sign = i % 2 === 1 ? 1 : -1;
     const magnitude = Math.ceil(i / 2);
     return sign * (30 * magnitude + 5 * (magnitude - 1));
   }
-  Object.keys(levels).sort((a,b) => a-b).forEach(level => {
+  usedLevels.forEach(level => {
     const nodes = levels[level];
+    const compressedLevel = levelMap[level];
     const totalWidth = (nodes.length - 1) * nodeSpacing;
     const startX = -totalWidth / 2;
     nodes.forEach((id, i) => {
       const n = topo.nodes.get(id);
       if (n) {
         n.x = startX + i * nodeSpacing;
-        n.y = startY + level * levelSpacing + getVerticalOffset(i);
+        n.y = startY + compressedLevel * levelSpacing + getVerticalOffset(i);
       }
     });
   });

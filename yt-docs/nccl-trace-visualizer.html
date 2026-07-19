@@ -45,8 +45,9 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
 .btn-group button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
 .btn-group button.primary:hover{background:#388bfd}
 #topo-canvas{flex:1;position:relative;overflow:hidden;background:#0d1117}
-#topo-wrapper{position:relative;flex:1;overflow:hidden}
-#legend{position:absolute;bottom:40px;left:10px;background:rgba(13,17,23,0.9);border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:10px;z-index:100}
+#legend-toggle{position:absolute;bottom:10px;left:10px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;z-index:101;color:#8b949e}
+#legend-toggle:hover{background:#30363d;color:#c9d1d9}
+#legend{position:absolute;bottom:40px;left:10px;background:rgba(13,17,23,0.95);border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:10px;z-index:100;display:none;max-height:300px;overflow-y:auto}
 #legend .legend-item{display:flex;align-items:center;gap:6px;margin:3px 0}
 #legend .legend-color{width:12px;height:12px;border-radius:2px;border:2px solid}
 #legend .legend-line{width:20px;height:3px;border-radius:1px}
@@ -94,7 +95,8 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
 </div>
 <div id="topo-wrapper">
 <div id="topo-canvas"></div>
-<div id="legend" style="display:none">
+<div id="legend-toggle" onclick="toggleLegend()">📋 图例</div>
+<div id="legend">
   <div style="font-weight:600;margin-bottom:4px;color:#c9d1d9">图例</div>
   <div class="legend-item"><div class="legend-color" style="background:#002233;border-color:#00e5ff"></div><span>源节点 (Source)</span></div>
   <div class="legend-item"><div class="legend-color" style="background:#0c2d6b;border-color:#58a6ff"></div><span>当前处理 (Processing)</span></div>
@@ -792,10 +794,23 @@ function updateChapterUI() {
   document.getElementById('step-total').textContent = ch.lineIdx.length;
   document.getElementById('step-num').textContent = ch.step+1;
   // Show legend only for SEARCH chapter
-  document.getElementById('legend').style.display = ch.def.id === 'SEARCH' ? 'block' : 'none';
+  // Legend toggle visibility based on chapter
+  const legendEl = document.getElementById('legend');
+  const toggleEl = document.getElementById('legend-toggle');
+  if (ch.def.id === 'SEARCH') {
+    toggleEl.style.display = 'block';
+  } else {
+    toggleEl.style.display = 'none';
+    legendEl.style.display = 'none';
+  }
 }
 
 // ═══ Step Navigation ═══
+function toggleLegend() {
+  const legend = document.getElementById('legend');
+  legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
+}
+
 function go(s) {
   const ch = chapters[curCh];
   if (s < -1) s = -1;

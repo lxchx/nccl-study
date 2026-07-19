@@ -451,31 +451,70 @@ function dagreLayout(topo, nodeLevel) {
     levels[level].push(n.id);
   });
   // Position: y based on level, x evenly spaced within level
-  // Alternating vertical offset: 0, +30, -30, +65, -65, +100, -100, ...
-  const baseLevelSpacing = 200;  // Base spacing between levels
+  const baseLevelSpacing = 200;
   const nodeSpacing = 160;
   const startY = 60;
+  const offsetStep = 40;  // Vertical offset step for conflicting nodes
   // Smart level mapping: skip empty levels
   const usedLevels = Object.keys(levels).sort((a,b) => a-b).map(Number);
-  const levelMap = {};  // original level → compressed level
+  const levelMap = {};
   usedLevels.forEach((lvl, i) => { levelMap[lvl] = i; });
-  function getVerticalOffset(i) {
-    if (i === 0) return 0;
-    const sign = i % 2 === 1 ? 1 : -1;
-    const magnitude = Math.ceil(i / 2);
-    return sign * (30 * magnitude + 5 * (magnitude - 1));
-  }
-  // Calculate max vertical offset for each level to determine adaptive spacing
+  // Build same-level edge map
+  const sameLevelEdges = {};
+  topo.edges.forEach(e => {
+    if (!topo.nodes.has(e.from) || !topo.nodes.has(e.to)) return;
+    const fromLevel = nodeLevel(topo.nodes.get(e.from).type);
+    const toLevel = nodeLevel(topo.nodes.get(e.to).type);
+    if (fromLevel === toLevel) {
+      if (!sameLevelEdges[fromLevel]) sameLevelEdges[fromLevel] = [];
+      sameLevelEdges[fromLevel].push([e.from, e.to]);
+    }
+  });
+  // Calculate offsets for nodes with same-level edges
+  const nodeOffsets = {};  // nodeId → vertical offset
+  usedLevels.forEach(level => {
+    const nodes = levels[level];
+    const edges = sameLevelEdges[level] || [];
+    if (edges.length === 0) return;  // No same-level edges, no offset needed
+    // Build adjacency list for this level
+    const adj = {};
+    nodes.forEach(id => { adj[id] = []; });
+    edges.forEach(([a, b]) => {
+      if (adj[a]) adj[a].push(b);
+      if (adj[b]) adj[b].push(a);
+    });
+    // Assign offsets using BFS
+    const assigned = {};
+    nodes.forEach(id => {
+      if (assigned[id] !== undefined) return;
+      // BFS from this node
+      const queue = [id];
+      assigned[id] = 0;
+      nodeOffsets[id] = 0;
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        const currOffset = assigned[curr];
+        adj[curr].forEach(neighbor => {
+          if (assigned[neighbor] === undefined) {
+            assigned[neighbor] = -currOffset || offsetStep;  // Alternate offset
+            nodeOffsets[neighbor] = assigned[neighbor];
+            queue.push(neighbor);
+          }
+        });
+      }
+    });
+  });
+  // Calculate max vertical offset for each level
   const levelMaxOffset = {};
   usedLevels.forEach(level => {
     const nodes = levels[level];
     let maxOffset = 0;
-    nodes.forEach((id, i) => { maxOffset = Math.max(maxOffset, Math.abs(getVerticalOffset(i))); });
+    nodes.forEach(id => { maxOffset = Math.max(maxOffset, Math.abs(nodeOffsets[id] || 0)); });
     levelMaxOffset[level] = maxOffset;
   });
   // Calculate Y position for each level with adaptive spacing
   let currentY = startY;
-  usedLevels.forEach((level, idx) => {
+  usedLevels.forEach(level => {
     const nodes = levels[level];
     const totalWidth = (nodes.length - 1) * nodeSpacing;
     const startX = -totalWidth / 2;
@@ -483,10 +522,9 @@ function dagreLayout(topo, nodeLevel) {
       const n = topo.nodes.get(id);
       if (n) {
         n.x = startX + i * nodeSpacing;
-        n.y = currentY + getVerticalOffset(i);
+        n.y = currentY + (nodeOffsets[id] || 0);
       }
     });
-    // Adaptive spacing: only add extra if offset > base threshold
     const extraSpacing = Math.max(0, levelMaxOffset[level] * 2 - baseLevelSpacing * 0.3);
     currentY += baseLevelSpacing + extraSpacing;
   });

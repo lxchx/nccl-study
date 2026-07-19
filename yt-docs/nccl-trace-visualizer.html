@@ -910,7 +910,7 @@ function proc(p, topo) {
       } else if (t === 3) {  // CPU/NUMA
         label = 'NUMA '+parseInt(id,16);
       } else if (t === 8) {  // DEV (PCIe bridge)
-        label = 'Bridge\n0x'+id.slice(-4);
+        label = 'PCIe Bridge\n0x'+id.slice(-4);
       } else {
         label = (typeNames[t]||'T'+t)+'\n0x'+id.slice(-4);
       }
@@ -951,7 +951,7 @@ function proc(p, topo) {
       function topoName(type, dev, id) {
         if (type===0 && !isNaN(dev) && dev>=0) return 'GPU '+dev;
         if (type===3) return 'NUMA '+parseInt(id,16);
-        if (type===8) return 'Bridge 0x'+id.slice(-4);
+        if (type===8) return 'PCIe Bridge 0x'+id.slice(-4);
         // Ensure id doesn't already start with 0x
         const idStr = id.startsWith('0x') ? id : '0x'+id;
         return (typeNames[type]||'T'+type)+' '+idStr;

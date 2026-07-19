@@ -182,6 +182,8 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
 
   // YT-TRACE: physical link + node details
   {
+    int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
+    int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
     int from_nlinks = node->nlinks;
     int to_nlinks = remNode->nlinks;
     float final_bw = link->bw;

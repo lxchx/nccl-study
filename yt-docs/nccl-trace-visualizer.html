@@ -451,8 +451,10 @@ function dagreLayout(topo, nodeLevel) {
     levels[level].push(n.id);
   });
   // Position: y based on level, x evenly spaced within level
+  // Add vertical offset for same-level nodes to reduce edge overlap
   const levelSpacing = 150;
   const nodeSpacing = 160;
+  const verticalOffset = 30;  // Vertical offset per node index
   const startY = 60;
   Object.keys(levels).sort((a,b) => a-b).forEach(level => {
     const nodes = levels[level];
@@ -462,6 +464,7 @@ function dagreLayout(topo, nodeLevel) {
       const n = topo.nodes.get(id);
       if (n) {
         n.x = startX + i * nodeSpacing;
+        n.y = startY + level * levelSpacing + i * verticalOffset;  // Add vertical offset
         n.y = startY + level * levelSpacing;
       }
     });

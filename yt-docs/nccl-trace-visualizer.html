@@ -325,12 +325,13 @@ const NODE_COLORS = {
 
 function nodeLevel(type) {
   // Each hardware type gets its own level for clear separation
+  // Levels: 0=CPU, 1=NVS, 2=CXB, 3=DEV, 4=GPU, 5=NIC/NET, 6=GIN/RMA
   const m = {
-    'cpu': 0,    // CPU root complex (top)
-    'nvs': 1,    // NVSwitch
-    'cxb': 1,    // CXL Bridge
-    'dev': 2,    // Device/bridge
-    'pci': 3,    // PCIe switch/port
+    'cpu': 0,    // CPU/NUMA root (top)
+    'nvs': 1,    // NVSwitch (DGX multi-GPU)
+    'cxb': 2,    // CXL Bridge (memory expansion)
+    'dev': 3,    // PCIe Bridge/Switch
+    'pci': 3,    // PCI device (treated same as DEV)
     'gpu': 4,    // GPU
     'nic': 5,    // NIC
     'net': 5,    // Network
@@ -338,7 +339,7 @@ function nodeLevel(type) {
     'rma': 6,    // RMA
     'rank': 4    // Rank marker
   };
-  return m[type] !== undefined ? m[type] : 2;
+  return m[type] !== undefined ? m[type] : 3;
 }
 
 function buildVis(ch) {

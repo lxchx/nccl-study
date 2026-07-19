@@ -182,21 +182,31 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
 
   // YT-TRACE: physical link + node details
   {
-    int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
-    int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
-    int from_rank = (node->type == GPU) ? node->gpu.rank : -1;
-    int to_rank = (remNode->type == GPU) ? remNode->gpu.rank : -1;
-    int from_cc = (node->type == GPU) ? node->gpu.cudaCompCap : -1;
-    int to_cc = (remNode->type == GPU) ? remNode->gpu.cudaCompCap : -1;
-    int from_gdr = (node->type == GPU) ? node->gpu.gdrSupport : -1;
-    int to_gdr = (remNode->type == GPU) ? remNode->gpu.gdrSupport : -1;
     int from_nlinks = node->nlinks;
     int to_nlinks = remNode->nlinks;
     float final_bw = link->bw;
-    YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
-             node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), from_dev, from_rank, from_cc, from_gdr, from_nlinks);
-    YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
-             remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), to_dev, to_rank, to_cc, to_gdr, to_nlinks);
+    // Print node A info - only fields that exist in the struct
+    if (node->type == GPU) {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
+               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), node->gpu.dev, node->gpu.rank, node->gpu.cudaCompCap, node->gpu.gdrSupport, from_nlinks);
+    } else if (node->type == DEV) {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx cc=%d nlinks=%d",
+               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), node->dev.cudaCompCap, from_nlinks);
+    } else {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx nlinks=%d",
+               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), from_nlinks);
+    }
+    // Print node B info - only fields that exist in the struct
+    if (remNode->type == GPU) {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
+               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), remNode->gpu.dev, remNode->gpu.rank, remNode->gpu.cudaCompCap, remNode->gpu.gdrSupport, to_nlinks);
+    } else if (remNode->type == DEV) {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx cc=%d nlinks=%d",
+               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), remNode->dev.cudaCompCap, to_nlinks);
+    } else {
+      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx nlinks=%d",
+               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), to_nlinks);
+    }
     YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f total_bw=%.0f",
              node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),
              remNode->type, to_dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id),

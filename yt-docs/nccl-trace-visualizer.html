@@ -138,8 +138,13 @@ function newTopo() {
       const n={id,type,label,extra,discovered:false}; this.nodes.set(id,n); return n;
     },
     addEdge(f,t,label='',extra={}) {
-      if (this.edges.some(e=>e.from===f&&e.to===t)) return;
-      this.edges.push({from:f,to:t,label,extra,discovered:false});
+      const existing = this.edges.find(e=>(e.from===f&&e.to===t)||(e.from===t&&e.to===f));
+      if (existing) {
+        // If reverse direction found, mark as bidirectional
+        if (existing.from===t && existing.to===f) existing.bidirectional = true;
+        return;
+      }
+      this.edges.push({from:f,to:t,label,extra,discovered:false,bidirectional:false});
     },
     discoverNode(id) { const n=this.nodes.get(id); if(n)n.discovered=true; },
     markEdge(f,t) {
@@ -299,7 +304,7 @@ const visOptions = {
     title: ''
   },
   edges: {
-    width: 3, arrows: {to: {enabled:false}},
+    width: 3, arrows: {to: {enabled:true, scaleFactor:0.5}},  // default single arrow, overridden per-edge
     font: {size:12, color:'#8b949e', face:'SF Mono,Menlo,monospace', strokeWidth:0},
     color: {color:'#21262d', highlight:'#3fb950', hover:'#3fb950'},
     smooth: {type:'curvedCW', roundness:0.1},
@@ -456,8 +461,11 @@ function updateVis(ch) {
       if (!e.discovered) return;
       let ec='#3fb950', ew=2, ed=false;
       if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
+      const arrowOpts = e.bidirectional
+        ? {from:{enabled:true,scaleFactor:0.5}, to:{enabled:true,scaleFactor:0.5}}
+        : {to:{enabled:true,scaleFactor:0.5}};
       visEdges.add({ from:e.from, to:e.to, label:e.label||undefined,
-        color:{color:ec}, width:ew, dashes:ed,
+        color:{color:ec}, width:ew, dashes:ed, arrows:arrowOpts,
         title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined });
     });
     ch.network = new vis.Network(canvas, {nodes:visNodes, edges:visEdges}, getVisOptions(curCh));
@@ -496,8 +504,11 @@ function updateVis(ch) {
     if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
     const eid = e.from+'-'+e.to;
     edgeIds.add(eid);
+    const arrowOpts = e.bidirectional
+      ? {from:{enabled:true,scaleFactor:0.5}, to:{enabled:true,scaleFactor:0.5}}
+      : {to:{enabled:true,scaleFactor:0.5}};
     const edgeData = { id:eid, from:e.from, to:e.to, label:e.label||undefined,
-      color:{color:ec}, width:ew, dashes:ed,
+      color:{color:ec}, width:ew, dashes:ed, arrows:arrowOpts,
       title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined };
     if (existingEdges.has(eid)) visEdges.update(edgeData); else visEdges.add(edgeData);
   });

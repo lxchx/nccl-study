@@ -108,6 +108,8 @@ ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNo
   system->nodes[type].count++;
   n->type = type;
   n->id = id;
+  // Log node creation - only type and id (fields vary by type, filled later)
+  YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx", type, NCCL_TOPO_ID_LOCAL_ID(id));
   if (type == GPU) {
     n->gpu.dev = NCCL_TOPO_UNDEF;
     n->gpu.rank = NCCL_TOPO_UNDEF;
@@ -184,31 +186,8 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
   {
     int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
     int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
-    int from_nlinks = node->nlinks;
-    int to_nlinks = remNode->nlinks;
     float final_bw = link->bw;
-    // Print node A info - only fields that exist in the struct
-    if (node->type == GPU) {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
-               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), node->gpu.dev, node->gpu.rank, node->gpu.cudaCompCap, node->gpu.gdrSupport, from_nlinks);
-    } else if (node->type == DEV) {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx cc=%d nlinks=%d",
-               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), node->dev.cudaCompCap, from_nlinks);
-    } else {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx nlinks=%d",
-               node->type, NCCL_TOPO_ID_LOCAL_ID(node->id), from_nlinks);
-    }
-    // Print node B info - only fields that exist in the struct
-    if (remNode->type == GPU) {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx dev=%d rank=%d cc=%d gdr=%d nlinks=%d",
-               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), remNode->gpu.dev, remNode->gpu.rank, remNode->gpu.cudaCompCap, remNode->gpu.gdrSupport, to_nlinks);
-    } else if (remNode->type == DEV) {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx cc=%d nlinks=%d",
-               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), remNode->dev.cudaCompCap, to_nlinks);
-    } else {
-      YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx nlinks=%d",
-               remNode->type, NCCL_TOPO_ID_LOCAL_ID(remNode->id), to_nlinks);
-    }
+    // Only log the link, node creation is logged in ncclTopoCreateNode
     YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f total_bw=%.0f",
              node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),
              remNode->type, to_dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id),

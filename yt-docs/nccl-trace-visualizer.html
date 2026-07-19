@@ -66,6 +66,9 @@ body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',mon
   <div style="display:flex;align-items:center;gap:8px">
     <button class="load-btn" id="btn-load">📂 Load Log</button>
     <span class="loaded" id="loaded-file"></span>
+    <select id="rank-select" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:10px;display:none">
+      <option value="-1">All (去重)</option>
+    </select>
     <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
   </div>
 </div>
@@ -258,6 +261,7 @@ function inferTopology(pl, ytIdx) {
 // ═══ Build chapters from log ═══
 function buildChapters(pl, allLineIdx) {
   const allParsed = allLineIdx.map(i => pl[i].parsed);
+  const filterRank = selectedRank >= 0;
   
   return CHAPTER_DEFS.map((def, ci) => {
     const lineIdx = [];
@@ -265,10 +269,11 @@ function buildChapters(pl, allLineIdx) {
     allLineIdx.forEach((idx, ai) => {
       const p = allParsed[ai];
       if (!p || !def.phases.includes(p.phase)) return;
+      // If specific rank selected, only show that rank
+      if (filterRank && p.rank !== selectedRank) return;
       // Dedup: group duplicates by normalized trace content
       const key = p.phase + '|' + p.type + '|' + Object.entries(p.data).sort().map(([k,v])=>k+'='+v).join(' ');
-      if (def.phases.length === 1 && def.phases[0] !== 'SCAN') {
-        // For single-phase chapters, dedup identical traces across ranks
+      if (!filterRank && def.phases.length === 1 && def.phases[0] !== 'SCAN') {
         if (seen.has(key)) return;
         seen.add(key);
       }
@@ -532,11 +537,32 @@ let pl = [];
 let autoI = null, autoP = false;
 
 // ═══ Load / Init ═══
+let selectedRank = -1; // -1 = all ranks (dedup)
+
 function loadLog(text) {
   RAW_LOG = text.split('\n').filter(l => l.includes('[YT-TRACE]'));
   document.getElementById('loaded-file').textContent = RAW_LOG.length+' traces';
+  // Populate rank selector
+  const ranks = new Set();
+  RAW_LOG.forEach(l => {
+    const m = l.match(/\[(\d+)\]/);
+    if (m) ranks.add(parseInt(m[1]));
+  });
+  const sel = document.getElementById('rank-select');
+  sel.innerHTML = '<option value="-1">All (去重)</option>';
+  [...ranks].sort((a,b)=>a-b).forEach(r => {
+    sel.innerHTML += '<option value="'+r+'">Rank '+r+'</option>';
+  });
+  sel.style.display = ranks.size > 1 ? 'inline-block' : 'none';
+  selectedRank = -1;
   initChapters(RAW_LOG);
 }
+
+document.getElementById('rank-select').onchange = function() {
+  selectedRank = parseInt(this.value);
+  initChapters(RAW_LOG);
+  switchChapter(curCh);
+};
 
 function initChapters(rawLog) {
   RAW_LOG = rawLog || [];

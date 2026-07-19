@@ -323,13 +323,9 @@ const NODE_COLORS = {
 };
 
 function nodeLevel(type) {
-  switch(type) {
-    case 'cpu': return 0;
-    case 'pci': return 1;
-    case 'gpu': return 2;
-    case 'rank': return 2;
-    default: return 0;
-  }
+  // Layer: NUMA/CPU=0, NVS/CXB=1, DEV=2, PCI=3, GPU=4, NIC/NET=5
+  const m = {'cpu':0,'nvs':1,'cxb':1,'dev':2,'pci':3,'gpu':4,'nic':5,'net':5,'gin':5,'rma':5,'rank':4};
+  return m[type] !== undefined ? m[type] : 3;
 }
 
 function buildVis(ch) {
@@ -418,15 +414,22 @@ function getVisOptions(chIdx) {
     // SCAN: hierarchical tree
     return { ...visOptions, layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } } };
   }
-  // TOPO and beyond: force-directed
+  // TOPO and beyond: hierarchical with edge minimization
   return { ...visOptions,
-    layout: { hierarchical: false },
-    physics: {
-      enabled: true,
-      solver: 'forceAtlas2Based',
-      forceAtlas2Based: { gravitationalConstant:-80, centralGravity:0.008, springLength:200, springConstant:0.02, damping:0.4 },
-      stabilization: { iterations:50, fit:true }
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: 'UD',
+        sortMethod: 'directed',
+        levelSeparation: 120,
+        nodeSpacing: 80,
+        treeSpacing: 100,
+        blockShifting: true,
+        edgeMinimization: true,
+        parentCentralization: true
+      }
     },
+    physics: { enabled: false },
     interaction: { hover:true, zoomView:true, dragView:true, selectable:false, navigationButtons:false }
   };
 }

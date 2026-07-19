@@ -524,7 +524,9 @@ function updateVis(ch) {
     }
     let label = n.label;
     if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
-    const nodeData = { id:n.id, label:label, level:nodeLevel(n.type), opacity:1.0,
+    // Use dagre-computed position for new nodes
+    const pos = (chIdx > 0 && n.x !== undefined) ? {x: n.x, y: n.y} : {};
+    const nodeData = { id:n.id, label:label, ...pos, opacity:1.0,
       color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
       title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined };
     if (existingNodes.has(n.id)) visNodes.update(nodeData); else visNodes.add(nodeData);

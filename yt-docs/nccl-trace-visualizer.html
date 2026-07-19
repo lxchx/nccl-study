@@ -483,24 +483,24 @@ function dagreLayout(topo, nodeLevel) {
       if (adj[a]) adj[a].push(b);
       if (adj[b]) adj[b].push(a);
     });
-    // Assign offsets using BFS
+    // Assign offsets using greedy graph coloring
+    // Adjacent nodes must have different offsets
     const assigned = {};
+    const offsets = [0, offsetStep, -offsetStep, offsetStep*2, -offsetStep*2];
     nodes.forEach(id => {
       if (assigned[id] !== undefined) return;
-      // BFS from this node
-      const queue = [id];
-      assigned[id] = 0;
-      nodeOffsets[id] = 0;
-      while (queue.length > 0) {
-        const curr = queue.shift();
-        const currOffset = assigned[curr];
-        adj[curr].forEach(neighbor => {
-          if (assigned[neighbor] === undefined) {
-            assigned[neighbor] = -currOffset || offsetStep;  // Alternate offset
-            nodeOffsets[neighbor] = assigned[neighbor];
-            queue.push(neighbor);
-          }
-        });
+      // Find used offsets by neighbors
+      const usedOffsets = new Set();
+      adj[id].forEach(neighbor => {
+        if (assigned[neighbor] !== undefined) usedOffsets.add(assigned[neighbor]);
+      });
+      // Assign first available offset
+      for (const off of offsets) {
+        if (!usedOffsets.has(off)) {
+          assigned[id] = off;
+          nodeOffsets[id] = off;
+          break;
+        }
       }
     });
   });

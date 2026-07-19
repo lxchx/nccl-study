@@ -465,7 +465,6 @@ function dagreLayout(topo, nodeLevel) {
       if (n) {
         n.x = startX + i * nodeSpacing;
         n.y = startY + level * levelSpacing + i * verticalOffset;  // Add vertical offset
-        n.y = startY + level * levelSpacing;
       }
     });
   });

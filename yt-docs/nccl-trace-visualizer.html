@@ -513,6 +513,16 @@ function updateVis(ch) {
   
   // Update existing nodes
   const existingNodes = new Set(visNodes.getIds());
+  // Check if any newly discovered nodes are missing dagre positions
+  let needRedagre = false;
+  if (chIdx > 0) {
+    topo.nodes.forEach(n => {
+      if (n.discovered && n.x === undefined) needRedagre = true;
+    });
+    if (needRedagre) {
+      dagreLayout(topo, nodeLevel);
+    }
+  }
   topo.nodes.forEach(n => {
     if (!n.discovered) { if (existingNodes.has(n.id)) visNodes.remove(n.id); return; }
     const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};

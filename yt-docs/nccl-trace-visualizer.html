@@ -838,10 +838,31 @@ function proc(p, topo) {
       const hexId = d.id;
       if (!isNaN(dev) && hexId) {
         GPU_HEX_TO_DEV[hexId] = dev;
-        // Also update any existing GPU node with this hex ID
-        const gpuId = 'gpu-'+dev;
-        if (topo.nodes.has(gpuId)) {
-          const gpuNode = topo.nodes.get(gpuId);
+        const newId = 'gpu-'+dev;
+        // Find existing GPU node that might need renaming
+        let existingNode = null;
+        let existingKey = null;
+        for (const [key, node] of topo.nodes) {
+          if (node.type === 'gpu' && key.startsWith('gpu-') && key !== newId) {
+            // Check if this node doesn't have a proper device number ID yet
+            // (i.e., it was created with hex ID like gpu-27000)
+            const num = parseInt(key.replace('gpu-', ''));
+            if (isNaN(num) || num > 100) {  // Device numbers are small (0-7), hex IDs are large
+              existingNode = node;
+              existingKey = key;
+              break;
+            }
+          }
+        }
+        if (existingNode && existingKey) {
+          // Rename node from gpu-XXXXX to gpu-N
+          topo.nodes.delete(existingKey);
+          existingNode.id = newId;
+          topo.nodes.set(newId, existingNode);
+        }
+        // Update or create GPU node
+        const gpuNode = topo.nodes.get(newId) || existingNode;
+        if (gpuNode) {
           gpuNode.extra = gpuNode.extra || {};
           gpuNode.extra.hexId = hexId;
           gpuNode.extra.rank = parseInt(d.rank);

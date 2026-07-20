@@ -416,21 +416,6 @@ function buildVis(ch) {
     });
   });
   
-  // Draw prev arrows (dashed, gray)
-  if (isSearch && bfsState.sourceGpu !== null) {
-    Object.entries(bfsState.prev).forEach(([nodeId, prevId]) => {
-      if (prevId && topo.nodes.has(prevId) && topo.nodes.has(nodeId)) {
-        visEdges.add({
-          from: prevId, to: nodeId,
-          color: { color: '#8b949e' },
-          width: 2, dashes: [6,3],
-          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-          font: { size: 0 },
-          title: 'prev: '+prevId+' → '+nodeId
-        });
-      }
-    });
-  }
 }
 
 // Physics-based layout for non-tree chapters
@@ -636,6 +621,27 @@ function updateVis(ch) {
       title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined };
     if (existingEdges.has(eid)) visEdges.update(edgeData); else visEdges.add(edgeData);
   });
+  // Draw prev arrows (dashed, gray) - before edge removal
+  if (isSearch && bfsState.sourceGpu !== null) {
+    Object.entries(bfsState.prev).forEach(([nodeId, prevId]) => {
+      if (prevId && topo.nodes.has(prevId) && topo.nodes.has(nodeId)) {
+        const prevIdStr = 'prev-'+prevId+'-'+nodeId;
+        edgeIds.add(prevIdStr);  // Add to edgeIds so it's not removed
+        const existingPrev = visEdges.get(prevIdStr);
+        if (!existingPrev) {
+          visEdges.add({
+            id: prevIdStr,
+            from: prevId, to: nodeId,
+            color: { color: '#8b949e' },
+            width: 2, dashes: [6,3],
+            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+            font: { size: 0 },
+            title: 'prev: '+prevId+' → '+nodeId
+          });
+        }
+      }
+    });
+  }
   existingEdges.forEach(id => { if (!edgeIds.has(id)) visEdges.remove(id); });
   ch.network.fit({animation:false});
 }

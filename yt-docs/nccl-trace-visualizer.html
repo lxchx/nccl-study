@@ -204,6 +204,10 @@ function parse(l) {
     else if (d._label === 'bfs_gpu_found') t = 'bfs_gpu_found';
     else if (d._label === 'bfs_done') t = 'bfs_done';
     else if (d._label === 'dfs_found') t = 'dfs_found';
+    else if (d._label === 'dfs_try') t = 'dfs_try';
+    else if (d._label === 'dfs_reserve') t = 'dfs_reserve';
+    else if (d._label === 'dfs_backtrack') t = 'dfs_backtrack';
+    else if (d._label === 'dfs_step') t = 'dfs_step';
     else if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
     else if (d.nChannels !== undefined) t = 'search_channel';
     else t = 'search_other';
@@ -1152,6 +1156,51 @@ function proc(p, topo) {
       const chId = 'channel-'+d.channel;
       topo.addNode(chId, 'rank', 'Ch'+d.channel+' '+patName, {detail:info, channelNum:parseInt(d.channel)});
       topo.discoverNode(chId);
+      break;
+    }
+    case 'dfs_try': {
+      // [SEARCH] dfs_try step=0 from_gpu=0 to_gpu=1 channel=0
+      const fromGpu = parseInt(d.from_gpu);
+      const toGpu = parseInt(d.to_gpu);
+      const step = parseInt(d.step);
+      const channel = parseInt(d.channel);
+      // Store DFS state for visualization
+      if (!bfsState.dfsState) bfsState.dfsState = {currentStep: -1, tryingEdge: null, channel: -1};
+      bfsState.dfsState.currentStep = step;
+      bfsState.dfsState.tryingEdge = {from: 'gpu-'+fromGpu, to: 'gpu-'+toGpu};
+      bfsState.dfsState.channel = channel;
+      break;
+    }
+    case 'dfs_reserve': {
+      // [SEARCH] dfs_reserve gpu=1 channel=0
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Mark GPU as reserved
+      if (!bfsState.dfsState) bfsState.dfsState = {};
+      if (!bfsState.dfsState.reserved) bfsState.dfsState.reserved = [];
+      bfsState.dfsState.reserved.push('gpu-'+gpu);
+      break;
+    }
+    case 'dfs_backtrack': {
+      // [SEARCH] dfs_backtrack gpu=1 channel=0
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Remove GPU from reserved
+      if (bfsState.dfsState && bfsState.dfsState.reserved) {
+        bfsState.dfsState.reserved = bfsState.dfsState.reserved.filter(id => id !== 'gpu-'+gpu);
+      }
+      break;
+    }
+    case 'dfs_step': {
+      // [SEARCH] dfs_step step=2 gpu=1 channel=0
+      const step = parseInt(d.step);
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Update DFS state
+      if (!bfsState.dfsState) bfsState.dfsState = {};
+      bfsState.dfsState.currentStep = step;
+      bfsState.dfsState.currentGpu = 'gpu-'+gpu;
+      bfsState.dfsState.channel = channel;
       break;
     }
     case 'search_other':

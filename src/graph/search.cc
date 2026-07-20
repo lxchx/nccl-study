@@ -360,17 +360,11 @@ ncclResult_t ncclTopoSearchTryGpu(struct ncclTopoSystem* system, struct ncclTopo
                                   int forcedOrder, int* time, int type, int index, int g) {
   const uint64_t flag = 1ULL << (graph->nChannels);
   struct ncclTopoNode* gpu;
-  // Log DFS try
-  YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_try step=%d from_gpu=%d to_gpu=%d channel=%d", step, index, g, graph->nChannels);
   NCCLCHECK(ncclTopoFollowPath(system, graph, type, index, GPU, g, 1, &gpu));
   if (gpu) {
     gpu->used ^= flag;
-    // Log bandwidth reservation
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_reserve gpu=%d channel=%d", g, graph->nChannels);
     NCCLCHECK(ncclTopoSearchRecGpu(system, graph, saveGraph, gpu, step, backToNet, backToFirstRank, forcedOrder, time));
     gpu->used ^= flag;
-    // Log backtrack
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_backtrack gpu=%d channel=%d", g, graph->nChannels);
     NCCLCHECK(ncclTopoFollowPath(system, graph, type, index, GPU, g, -1, &gpu));
   }
   return ncclSuccess;
@@ -629,10 +623,6 @@ ncclResult_t ncclTopoSearchRecGpu(struct ncclTopoSystem* system, struct ncclTopo
                                   int backToFirstRank, int forcedOrder, int* time) {
   if ((*time) <= 0) return ncclSuccess;
   (*time)--;
-  // Log DFS step
-  if (gpu) {
-    YT_TRACE(NCCL_GRAPH, "[SEARCH] dfs_step step=%d gpu=%d channel=%d", step, gpu->gpu.rank, graph->nChannels);
-  }
 
   int ngpus = system->nodes[GPU].count;
   if (step == ngpus) {

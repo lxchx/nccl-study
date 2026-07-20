@@ -621,23 +621,19 @@ function updateVis(ch) {
       title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined };
     if (existingEdges.has(eid)) visEdges.update(edgeData); else visEdges.add(edgeData);
   });
-  // Draw prev arrows (dashed, gray) - before edge removal
+  // Highlight prev edges (part of shortest path tree) - modify existing edges
   if (isSearch && bfsState.sourceGpu !== null) {
     Object.entries(bfsState.prev).forEach(([nodeId, prevId]) => {
       if (prevId && topo.nodes.has(prevId) && topo.nodes.has(nodeId)) {
-        const prevIdStr = 'prev-'+prevId+'-'+nodeId;
-        edgeIds.add(prevIdStr);  // Add to edgeIds so it's not removed
-        const existingPrev = visEdges.get(prevIdStr);
-        if (!existingPrev) {
-          visEdges.add({
-            id: prevIdStr,
-            from: prevId, to: nodeId,
-            color: { color: '#8b949e' },
-            width: 2, dashes: [6,3],
-            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-            font: { size: 0 },
-            title: 'prev: '+prevId+' → '+nodeId
-          });
+        // Find and highlight existing edge
+        const eid1 = prevId+'-'+nodeId;
+        const eid2 = nodeId+'-'+prevId;
+        if (visEdges.get(eid1)) {
+          visEdges.update({id: eid1, color: {color: '#ff6b6b'}, width: 4, dashes: false});
+          edgeIds.add(eid1);
+        } else if (visEdges.get(eid2)) {
+          visEdges.update({id: eid2, color: {color: '#ff6b6b'}, width: 4, dashes: false});
+          edgeIds.add(eid2);
         }
       }
     });
@@ -1123,8 +1119,8 @@ function proc(p, topo) {
       if (!existingSimplified) {
         // Add new simplified edge
         topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops, simplified:true});
-        topo.markEdge(srcId, dstId);  // Discover the simplified edge
       }
+      topo.markEdge(srcId, dstId);  // Always discover the simplified edge
       bfsState.simplifiedEdges.push({from:srcId, to:dstId, type:lbl, bw:parseFloat(d.bw), hops:parseInt(d.hops)});
       break;
     }

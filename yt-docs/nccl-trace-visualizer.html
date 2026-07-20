@@ -121,8 +121,8 @@ RAW_LOG=[];
 const CHAPTER_DEFS = [
   { id: 'SCAN',   label: '硬件扫描',         phases: ['SCAN','RANK'], dependsOn: -1 },
   { id: 'TOPO',   label: '拓扑构建',         phases: ['TOPO'],        dependsOn: -1 },
-  { id: 'SEARCH', label: '最短路搜索',       phases: ['SEARCH'],      dependsOn: 1 },
-  { id: 'CHANNEL',label: '信道分配',         phases: ['CHANNEL'],     dependsOn: 2 },
+  { id: 'SEARCH', label: '最短路搜索 (BFS)', phases: ['SEARCH'],      dependsOn: 1, searchType: 'bfs' },
+  { id: 'CHANNEL',label: '信道搜索 (DFS)',   phases: ['SEARCH'],      dependsOn: 1, searchType: 'dfs' },
 ];
 
 // ═══ TOPO trace sub-types ═══
@@ -360,7 +360,8 @@ function nodeLevel(type) {
 function buildVis(ch) {
   const { topo, visNodes, visEdges } = ch;
   visNodes.clear(); visEdges.clear();
-  const isSearch = ch.def && ch.def.id === 'SEARCH';
+  const isSearch = ch.def && ch.def.id === 'SEARCH' && ch.def.searchType === 'bfs';
+  const isChannel = ch.def && ch.def.id === 'CHANNEL';
   
   topo.nodes.forEach(n => {
     const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
@@ -528,7 +529,8 @@ function dagreLayout(topo, nodeLevel) {
 // Incremental vis update (no rebuild)
 function updateVis(ch) {
   const { topo, visNodes, visEdges } = ch;
-  const isSearch = ch.def && ch.def.id === 'SEARCH';
+  const isSearch = ch.def && ch.def.id === 'SEARCH' && ch.def.searchType === 'bfs';
+  const isChannel = ch.def && ch.def.id === 'CHANNEL';
   const canvas = document.getElementById('topo-canvas');
   const chIdx = chapters.indexOf(ch);
   
@@ -641,6 +643,35 @@ function updateVis(ch) {
         }
       }
     });
+  }
+  // Show channel information for CHANNEL chapter
+  if (isChannel) {
+    // Collect channel info from discovered nodes
+    const channels = [];
+    topo.nodes.forEach((n, id) => {
+      if (n.discovered && n.type === 'rank' && n.extra && n.extra.channelNum) {
+        channels.push({
+          id: id,
+          num: n.extra.channelNum,
+          label: n.label,
+          detail: n.extra.detail
+        });
+      }
+    });
+    // Sort by channel number
+    channels.sort((a, b) => a.num - b.num);
+    // Update info panel with channel summary
+    const infoPanel = document.getElementById('info-panel');
+    if (infoPanel && channels.length > 0) {
+      let html = '<div style="font-weight:600;margin-bottom:8px;color:#c9d1d9">Channel Summary</div>';
+      channels.forEach(ch => {
+        html += '<div style="margin-bottom:8px;padding:6px;background:#161b22;border-radius:4px">';
+        html += '<div style="color:#58a6ff;font-weight:600">'+ch.label+'</div>';
+        html += '<div style="font-size:10px;color:#8b949e;white-space:pre-line">'+ch.detail+'</div>';
+        html += '</div>';
+      });
+      infoPanel.innerHTML = html;
+    }
   }
   existingEdges.forEach(id => { if (!edgeIds.has(id)) visEdges.remove(id); });
   ch.network.fit({animation:false});

@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>YT-TRACE Visualizer — NCCL Initialization</title>
+<!-- vis-network for auto layout -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/dist/vis-network.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/vis-network.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'SF Mono','Menlo','Monaco','Cascadia Code','JetBrains Mono',monospace;background:#0d1117;color:#c9d1d9;height:100vh;overflow:hidden}
+#app{display:flex;height:100vh}
+#log-panel{width:42%;min-width:400px;border-right:1px solid #30363d;display:flex;flex-direction:column;background:#0d1117}
+#log-header{padding:10px 14px;border-bottom:1px solid #30363d;background:#161b22;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+#log-header h2{font-size:12px;font-weight:600;color:#58a6ff;text-transform:uppercase}
+#log-header .load-btn{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:2px 10px;border-radius:4px;font-size:10px;cursor:pointer}
+#log-header .load-btn:hover{background:#30363d}
+#log-header .loaded{font-size:10px;color:#8b949e;margin-left:6px}
+.step-info{font-size:11px;color:#8b949e}
+.step-info .current{color:#58a6ff;font-weight:600}
+#log-stream{flex:1;overflow-y:auto;padding:6px 0;font-size:10.5px;line-height:1.5}
+.log-line{padding:1px 14px;white-space:pre;font-family:inherit;color:#484f58}
+.log-line.yt-trace{color:#7ee787}
+.log-line.current{background:#1f2937;border-left:3px solid #ffd700;color:#f0f6fc;font-weight:500}
+.log-line.current .tag{color:#ffd700}
+.log-line.yt-trace .tag{color:#00e676;font-weight:700}
+.log-line.yt-trace.pci{color:#d2a8ff}
+.log-line.yt-trace.cpu{color:#79c0ff}
+.log-line.yt-trace.gpu{color:#7ee787}
+.log-line.yt-trace.rank{color:#ffa657}
+.log-line.yt-trace.src{color:#58a6ff;opacity:.7}
+.log-line.yt-trace.src .tag{color:#58a6ff;opacity:.6}
+#topo-panel{flex:1;display:flex;flex-direction:column;background:#0d1117}
+#topo-header{padding:8px 14px;border-bottom:1px solid #30363d;background:#161b22;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.chapter-nav{display:flex;align-items:center;gap:4px;font-size:11px;margin-right:8px}
+.chapter-nav button{font-size:10px;padding:2px 8px}
+.chapter-nav .ch-label{color:#c9d1d9;font-weight:600;margin:0 4px}
+.chapter-nav .ch-total{color:#8b949e}
+.btn-group{display:flex;gap:4px;margin-left:auto}
+.btn-group button,.chapter-nav button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:3px 10px;border-radius:5px;font-size:11px;font-family:inherit;cursor:pointer}
+.btn-group button:hover,.chapter-nav button:hover{background:#30363d;border-color:#8b949e}
+.btn-group button:disabled,.chapter-nav button:disabled{opacity:.4;cursor:not-allowed}
+.btn-group button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.btn-group button.primary:hover{background:#388bfd}
+#topo-wrapper{flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden}
+#topo-canvas{flex:1;position:relative;overflow:hidden;background:#0d1117}
+#legend-toggle{position:absolute;bottom:10px;left:10px;background:#21262d;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;z-index:101;color:#8b949e}
+#legend-toggle:hover{background:#30363d;color:#c9d1d9}
+#legend{position:absolute;bottom:40px;left:10px;background:rgba(13,17,23,0.95);border:1px solid #30363d;border-radius:6px;padding:8px 12px;font-size:10px;z-index:100;display:none;max-height:300px;overflow-y:auto}
+#legend .legend-item{display:flex;align-items:center;gap:6px;margin:3px 0}
+#legend .legend-color{width:12px;height:12px;border-radius:2px;border:2px solid}
+#legend .legend-line{width:20px;height:3px;border-radius:1px}
+#status-bar{padding:4px 14px;border-top:1px solid #30363d;background:#161b22;font-size:10px;color:#8b949e;display:flex;gap:10px;flex-shrink:0;align-items:center}
+#status-bar .stat{display:flex;gap:3px}
+#status-bar .stat-label{color:#484f58}
+#status-bar .stat-value{color:#58a6ff;font-weight:600}
+#warnings{font-size:10px;color:#ffa657;flex:1;text-align:right;line-height:1.4}
+#log-stream::-webkit-scrollbar{width:5px}
+#log-stream::-webkit-scrollbar-track{background:transparent}
+#log-stream::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="log-panel">
+<div id="log-header">
+  <h2>📋 NCCL Log</h2>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="load-btn" id="btn-load">📂 Load Log</button>
+    <span class="loaded" id="loaded-file"></span>
+    <select id="rank-select" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:10px;display:none">
+      <option value="-1">All (去重)</option>
+    </select>
+    <span class="step-info">Step <span class="current" id="step-num">0</span> / <span id="step-total">0</span></span>
+  </div>
+</div>
+<input type="file" id="file-input" accept=".log,.txt" style="display:none">
+<div id="log-stream"></div>
+</div>
+<div id="topo-panel">
+<div id="topo-header">
+  <div class="chapter-nav">
+    <button id="btn-ch-prev" title="Previous chapter">◀ Ch</button>
+    <span class="ch-label" id="ch-label">—</span>
+    <span class="ch-total" id="ch-total"></span>
+    <button id="btn-ch-next" title="Next chapter">Ch ▶</button>
+  </div>
+  <div class="btn-group">
+    <button id="btn-reset" title="Reset (r)">↺</button>
+    <button id="btn-prev" title="Previous (←)">◀</button>
+    <button id="btn-next" class="primary" title="Next step (Space/→)">▶ Next</button>
+    <button id="btn-auto" title="Auto play (a)">▶▶</button>
+  </div>
+</div>
+<div id="topo-wrapper">
+<div id="topo-canvas"></div>
+<div id="legend-toggle" onclick="toggleLegend()">📋 图例</div>
+<div id="legend">
+  <div style="font-weight:600;margin-bottom:4px;color:#c9d1d9">图例</div>
+  <div class="legend-item"><div class="legend-color" style="background:#002233;border-color:#00e5ff"></div><span>源节点 (Source)</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#0c2d6b;border-color:#58a6ff"></div><span>当前处理 (Processing)</span></div>
+  <div class="legend-item"><div class="legend-color" style="background:#3d2e00;border-color:#d29922"></div><span>队列中 (In Queue)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#ffd700"></div><span>简化边 (Simplified Edge)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#8b949e;border-top:2px dashed #8b949e;height:0"></div><span>最短路径树 (Prev)</span></div>
+  <div class="legend-item"><div class="legend-line" style="background:#3fb950"></div><span>物理拓扑 (Physical)</span></div>
+</div>
+</div>
+<div id="status-bar">
+  <span class="stat"><span class="stat-label">Nodes:</span><span class="stat-value" id="stat-nodes">0</span></span>
+  <span class="stat"><span class="stat-label">Edges:</span><span class="stat-value" id="stat-edges">0</span></span>
+  <span class="stat" id="warnings"></span>
+</div>
+</div>
+</div>
+<script>
+RAW_LOG=[];
+
+// ═══ Chapter Definitions (edit to add new phases) ═══
+const CHAPTER_DEFS = [
+  { id: 'SCAN',   label: '硬件扫描',         phases: ['SCAN','RANK'], dependsOn: -1 },
+  { id: 'TOPO',   label: '拓扑构建',         phases: ['TOPO'],        dependsOn: -1 },
+  { id: 'SEARCH', label: '最短路搜索 (BFS)', phases: ['SEARCH'],      dependsOn: 1, searchType: 'bfs' },
+  { id: 'CHANNEL',label: '信道搜索 (DFS)',   phases: ['SEARCH'],      dependsOn: 1, searchType: 'dfs' },
+];
+
+// ═══ TOPO trace sub-types ═══
+function topoTypeFromTrace(d) {
+  if (d.gpu_path !== undefined || d.gpu !== undefined && d.to_type !== undefined) return 'gpu_path';
+  if (d.gpu_matrix !== undefined || d.gpu !== undefined && d.peer !== undefined) return 'gpu_matrix';
+  return 'topo_other';
+}
+
+// ═══ Per-chapter state ═══
+let chapters = [];  // [{ topo, network, visNodes, visEdges, lineIdx, step, label }]
+let curCh = 0;
+
+// ═══ Topo Model ═══
+function newTopo() {
+  return {
+    nodes: new Map(), edges: [],
+    addNode(id,type,label,extra={}) {
+      if (this.nodes.has(id)) return this.nodes.get(id);
+      const n={id,type,label,extra,discovered:false}; this.nodes.set(id,n); return n;
+    },
+    addEdge(f,t,label='',extra={}) {
+      const existing = this.edges.find(e=>(e.from===f&&e.to===t)||(e.from===t&&e.to===f));
+      if (existing) {
+        // If reverse direction found, mark as bidirectional
+        if (existing.from===t && existing.to===f) existing.bidirectional = true;
+        return;
+      }
+      this.edges.push({from:f,to:t,label,extra,discovered:false,bidirectional:false});
+    },
+    discoverNode(id) { const n=this.nodes.get(id); if(n)n.discovered=true; },
+    markEdge(f,t) {
+      this.edges.forEach(e=>{
+        if((e.from===f&&e.to===t)||(e.from===t&&e.to===f)) e.discovered=true;
+      });
+    },
+    // Clone all nodes+edges as discovered
+    cloneDiscovered() {
+      const t = newTopo();
+      this.nodes.forEach(n => t.addNode(n.id,n.type,n.label,{...n.extra}));
+      this.edges.forEach(e => t.addEdge(e.from,e.to,e.label));
+      t.nodes.forEach(n => n.discovered=true);
+      t.edges.forEach(e => e.discovered=true);
+      return t;
+    }
+  };
+}
+
+// ═══ Parser ═══
+function parse(l) {
+  const m = l.match(/\[(\d+)\].*?\[YT-TRACE\]\s+\[(\w+)\]\s+(.+)/);
+  if (!m) return null;
+  const d={}; let t = m[2].toLowerCase();
+  // Extract label (first word) and key=value pairs
+  const content = m[3];
+  const labelMatch = content.match(/^(\w+)/);
+  if (labelMatch) d._label = labelMatch[1];
+  (content.match(/(\w+)=(?:"([^"]*)"|(\S+(?:\s+\S+)*?))(?=\s+\w+=|$)/g)||[])
+    .forEach(x => { const e=x.indexOf('='); d[x.substring(0,e)]=x.substring(e+1); });
+  if (t==='scan') { if (d.dev!==undefined) t='gpu'; else if (d.numa!==undefined) t='cpu'; else if (d.busid!==undefined) t='pci'; }
+  else if (t==='rank') t='rank'; else if (t==='src') t='src';
+  else if (t==='topo') {
+    // New format: [TOPO] node type=8 id=0x... cc=... nlinks=...
+    if (d.type !== undefined && d.id !== undefined && d.from_type === undefined) t = 'topo_node';
+    // Old format: [TOPO] node from_type=8 from_id=0x... from_dev=-1 ...
+    else if (d._label === 'gpu' && d.dev !== undefined && d.id !== undefined) t = 'topo_gpu';
+    else if (d.type !== undefined && d.id !== undefined && d.from_type === undefined) t = 'topo_node';
+    else if (d.from_type !== undefined && d.from_dev !== undefined && d.to_type === undefined) t = 'topo_node';
+    else if (d.from_type !== undefined && d.to_type !== undefined && d.link_type !== undefined) t = 'topo_link';
+    else t = 'topo_other';
+  }
+  else if (t==='search') {
+    if (d._label === 'bfs_done') t = 'bfs_done';
+    else if (d._label === 'bfs_gpu_found') t = 'bfs_gpu_found';
+    else if (d._label === 'bfs_start') t = 'bfs_start';
+    else if (d._label === 'bfs_dequeue') t = 'bfs_dequeue';
+    else if (d._label === 'bfs_enqueue') t = 'bfs_enqueue';
+    else if (d._label === 'bfs_improve') t = 'bfs_improve';
+    else if (d._label === 'bfs_gpu_found') t = 'bfs_gpu_found';
+    else if (d._label === 'bfs_done') t = 'bfs_done';
+    else if (d._label === 'dfs_found') t = 'dfs_found';
+    else if (d._label === 'dfs_try') t = 'dfs_try';
+    else if (d._label === 'dfs_reserve') t = 'dfs_reserve';
+    else if (d._label === 'dfs_backtrack') t = 'dfs_backtrack';
+    else if (d._label === 'dfs_step') t = 'dfs_step';
+    else if (d.gpu !== undefined && d.peer !== undefined && d.type !== undefined) t = 'search_path';
+    else if (d.nChannels !== undefined) t = 'search_channel';
+    else t = 'search_other';
+  }
+  return { rank:parseInt(m[1]), phase:m[2], type:t, data:d, raw:l };
+}
+
+// ═══ Topology Inference (from SCAN traces) ═══
+let NUMA_MAP = {}, BUSID_NUMA = {}, missingWarnings = [];
+
+function inferTopology(pl, ytIdx) {
+  missingWarnings = [];
+  const rankInfo = {};
+  ytIdx.forEach(idx => {
+    const p = pl[idx].parsed;
+    if (!p) return;
+    const r = p.rank;
+    if (r===undefined||r===null) return;
+    if (!rankInfo[r]) rankInfo[r] = { numas:[], busids:[], devs:[] };
+    const d = p.data;
+    if (p.type==='cpu' && d.numa!==undefined) rankInfo[r].numas.push(parseInt(d.numa));
+    if (p.type==='pci' && d.busid) rankInfo[r].busids.push(d.busid);
+    if (p.type==='gpu' && d.dev!==undefined && d.busid)
+      rankInfo[r].devs.push({ dev:parseInt(d.dev), busid:d.busid });
+  });
+  const rankKeys = Object.keys(rankInfo).map(Number).sort((a,b)=>a-b);
+  const knownRanks = [];
+  rankKeys.forEach(r => {
+    const info = rankInfo[r];
+    const ok = info.numas.length>0 && info.busids.length>0 && info.devs.length>0;
+    if (ok) knownRanks.push(r);
+    const issues = [];
+    if (!info.numas.length) issues.push('cpu trace');
+    if (!info.busids.length) issues.push('pci trace');
+    if (!info.devs.length) issues.push('gpu trace');
+    if (issues.length) missingWarnings.push('⚠️ Rank '+r+': missing '+issues.join(', '));
+  });
+  const devMap = {};
+  knownRanks.forEach(r => {
+    const info = rankInfo[r];
+    const numa = info.numas[0];
+    info.devs.forEach(g => {
+      const busid = info.busids[0] || g.busid;
+      if (devMap[g.dev]!==undefined) return;
+      devMap[g.dev] = { numa, busid };
+    });
+  });
+  if (Object.keys(devMap).length===0 && knownRanks.length>0) {
+    knownRanks.forEach(r => {
+      const info = rankInfo[r];
+      if (info.numas[0]!==undefined && info.busids[0]) devMap[r] = { numa:info.numas[0], busid:info.busids[0] };
+    });
+    if (Object.keys(devMap).length>0) missingWarnings.push('ℹ️ GPU dev inferred from rank number');
+  }
+  const numaGroups = {};
+  Object.entries(devMap).forEach(([dev,info]) => {
+    const n = info.numa;
+    if (!numaGroups[n]) numaGroups[n] = { gpus:[], pcis:[] };
+    if (!numaGroups[n].pcis.includes(info.busid)) { numaGroups[n].gpus.push(parseInt(dev)); numaGroups[n].pcis.push(info.busid); }
+  });
+  Object.keys(numaGroups).forEach(n => {
+    const idxs = numaGroups[n].gpus.map((g,i)=>i).sort((a,b)=>numaGroups[n].gpus[a]-numaGroups[n].gpus[b]);
+    numaGroups[n].gpus = idxs.map(i=>numaGroups[n].gpus[i]);
+    numaGroups[n].pcis = idxs.map(i=>numaGroups[n].pcis[i]);
+  });
+  NUMA_MAP = Object.fromEntries(Object.entries(numaGroups).sort(([a],[b])=>parseInt(a)-parseInt(b)));
+  BUSID_NUMA = {};
+  Object.entries(NUMA_MAP).forEach(([n,v]) => v.pcis.forEach(b => { BUSID_NUMA[b]=parseInt(n); }));
+  return { ranks:knownRanks.length, warnings:missingWarnings };
+}
+
+// ═══ Build chapters from log ═══
+function buildChapters(pl, allLineIdx) {
+  const allParsed = allLineIdx.map(i => pl[i].parsed);
+  const filterRank = selectedRank >= 0;
+  
+  return CHAPTER_DEFS.map((def, ci) => {
+    const lineIdx = [];
+    const seen = new Set();
+    allLineIdx.forEach((idx, ai) => {
+      const p = allParsed[ai];
+      if (!p || !def.phases.includes(p.phase)) return;
+      // If specific rank selected, only show that rank
+      if (filterRank && p.rank !== selectedRank) return;
+      // Dedup: group duplicates by normalized trace content
+      const key = p.phase + '|' + p.type + '|' + Object.entries(p.data).sort().map(([k,v])=>k+'='+v).join(' ');
+      if (!filterRank && def.phases.length === 1 && def.phases[0] !== 'SCAN') {
+        if (seen.has(key)) return;
+        seen.add(key);
+      }
+      lineIdx.push(idx);
+    });
+    
+    const ch = {
+      def, topo: newTopo(),
+      network: null, visNodes: new vis.DataSet([]), visEdges: new vis.DataSet([]),
+      lineIdx, step: -1, baseTopo: null
+    };
+    return ch;
+  });
+}
+
+// ═══ vis-network ═══
+const visOptions = {
+  nodes: {
+    shape: 'box', borderWidth: 3,
+    font: {color:'#c9d1d9', size:16, face:'SF Mono,Menlo,monospace'},
+    color: {background:'#1c2128', border:'#30363d'},
+    margin: {top:10, bottom:10, left:16, right:16},
+    title: ''
+  },
+  edges: {
+    width: 3, arrows: {to: {enabled:true, scaleFactor:0.5}},  // default single arrow, overridden per-edge
+    font: {size:12, color:'#8b949e', face:'SF Mono,Menlo,monospace', strokeWidth:0},
+    color: {color:'#21262d', highlight:'#3fb950', hover:'#3fb950'},
+    smooth: {type:'curvedCW', roundness:0.1},
+    title: ''
+  },
+  layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } },
+  physics: { enabled:false },
+  interaction: { hover:true, zoomView:true, dragView:true, selectable:false }
+};
+
+const NODE_COLORS = {
+  cpu:  { bg:'#1a3a5c', border:'#58a6ff' },
+  pci:  { bg:'#2a1a4e', border:'#bc8cff' },
+  gpu:  { bg:'#0e4429', border:'#3fb950' },
+  rank: { bg:'#3d1a00', border:'#d29922' }
+};
+
+function nodeLevel(type) {
+  // Each hardware type gets its own level for clear separation
+  // Levels: 0=CPU, 1=NVS, 2=CXB, 3=DEV, 4=GPU, 5=NIC/NET, 6=GIN/RMA
+  const m = {
+    'cpu': 0,    // CPU/NUMA root (top)
+    'nvs': 1,    // NVSwitch (DGX multi-GPU)
+    'cxb': 2,    // CXL Bridge (memory expansion)
+    'dev': 3,    // PCIe Bridge/Switch
+    'pci': 3,    // PCI device (treated same as DEV)
+    'gpu': 4,    // GPU
+    'nic': 5,    // NIC
+    'net': 5,    // Network
+    'gin': 6,    // GIN
+    'rma': 6,    // RMA
+    'rank': 4    // Rank marker
+  };
+  return m[type] !== undefined ? m[type] : 3;
+}
+
+function buildVis(ch) {
+  const { topo, visNodes, visEdges } = ch;
+  visNodes.clear(); visEdges.clear();
+  const isSearch = ch.def && ch.def.id === 'SEARCH' && ch.def.searchType === 'bfs';
+  const isChannel = ch.def && ch.def.id === 'CHANNEL';
+  
+  topo.nodes.forEach(n => {
+    const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+    let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+    let opacity = n.discovered ? 1.0 : 0.08;
+    let size = undefined;
+    
+    // BFS state highlighting (only for SEARCH chapter)
+    if (isSearch && bfsState.sourceGpu !== null) {
+      const gpuRank = parseInt(n.id.replace('gpu-',''));
+      if (n.id === 'gpu-'+bfsState.sourceGpu) {
+        // Source node: green
+        bg = '#0e4429'; border = '#3fb950'; borderWidth = 5; fontColor = '#3fb950';
+      } else if (bfsState.currentNode === n.id) {
+        // Current processing node: blue
+        bg = '#0c2d6b'; border = '#58a6ff'; borderWidth = 5; fontColor = '#58a6ff';
+      } else if (bfsState.queue.includes(n.id)) {
+        // Queue node: yellow
+        bg = '#3d2e00'; border = '#d29922'; borderWidth = 4; fontColor = '#d29922';
+      }
+    }
+    
+    // Show dist value on GPU nodes during BFS
+    let label = n.label;
+    if (isSearch && n.type === 'gpu' && bfsState.dist[n.id] !== undefined) {
+      label = n.label + '\n' + bfsState.dist[n.id] + 'GB';
+    }
+    
+    visNodes.add({
+      id: n.id, label: label, level: nodeLevel(n.type),
+      opacity: opacity,
+      color: { background:bg, border:border },
+      borderWidth: borderWidth,
+      font: { color: fontColor, size: 15 },
+      title: n.extra.detail ? n.extra.detail.replace(/\n/g,'<br>') : undefined
+    });
+  });
+  
+  // Draw edges
+  topo.edges.forEach(e => {
+    let edgeColor = e.discovered ? '#3fb950' : '#21262d';
+    let edgeWidth = e.discovered ? 2 : 1;
+    let dashes = e.discovered ? false : [4,4];
+    
+    // Simplified edges: thicker, brighter
+    if (e.extra && e.extra.simplified) {
+      edgeColor = '#ffd700';
+      edgeWidth = 4;
+      dashes = false;
+    }
+    
+    visEdges.add({
+      from: e.from, to: e.to, label: e.label || undefined,
+      color: { color: edgeColor },
+      width: edgeWidth, dashes: dashes,
+      title: e.extra && e.extra.detail ? e.extra.detail.replace(/\n/g,'<br>') : undefined
+    });
+  });
+  
+}
+
+// Physics-based layout for non-tree chapters
+function getVisOptions(chIdx) {
+  if (chIdx === 0) {
+    // SCAN: hierarchical tree (vis-network)
+    return { ...visOptions, layout: { hierarchical: { enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:160, nodeSpacing:300, treeSpacing:400 } } };
+  }
+  // TOPO and beyond: no layout (dagre handles positioning)
+  return { ...visOptions,
+    layout: { hierarchical: false },
+    physics: { enabled: false },
+    interaction: { hover:true, zoomView:true, dragView:true, selectable:false, navigationButtons:false }
+  };
+}
+
+// Dagre layout: minimizes edge crossings with proper layered positioning
+function dagreLayout(topo, nodeLevel) {
+  // Manual layered layout: guaranteed correct hierarchy
+  const levels = {};
+  topo.nodes.forEach((n) => {
+    const level = nodeLevel(n.type);
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(n.id);
+  });
+  // Position: y based on level, x evenly spaced within level
+  const baseLevelSpacing = 200;
+  const nodeSpacing = 160;
+  const startY = 60;
+  const offsetStep = 40;  // Vertical offset step for conflicting nodes
+  // Smart level mapping: skip empty levels
+  const usedLevels = Object.keys(levels).sort((a,b) => a-b).map(Number);
+  const levelMap = {};
+  usedLevels.forEach((lvl, i) => { levelMap[lvl] = i; });
+  // Build same-level edge map
+  const sameLevelEdges = {};
+  topo.edges.forEach(e => {
+    if (!topo.nodes.has(e.from) || !topo.nodes.has(e.to)) return;
+    const fromLevel = nodeLevel(topo.nodes.get(e.from).type);
+    const toLevel = nodeLevel(topo.nodes.get(e.to).type);
+    if (fromLevel === toLevel) {
+      if (!sameLevelEdges[fromLevel]) sameLevelEdges[fromLevel] = [];
+      sameLevelEdges[fromLevel].push([e.from, e.to]);
+    }
+  });
+  // Calculate offsets for nodes with same-level edges
+  const nodeOffsets = {};  // nodeId → vertical offset
+  usedLevels.forEach(level => {
+    const nodes = levels[level];
+    const edges = sameLevelEdges[level] || [];
+    if (edges.length === 0) return;  // No same-level edges, no offset needed
+    // Build adjacency list for this level
+    const adj = {};
+    nodes.forEach(id => { adj[id] = []; });
+    edges.forEach(([a, b]) => {
+      if (adj[a]) adj[a].push(b);
+      if (adj[b]) adj[b].push(a);
+    });
+    // Assign offsets using greedy graph coloring
+    // Adjacent nodes must have different offsets
+    const assigned = {};
+    const offsets = [0, offsetStep, -offsetStep, offsetStep*2, -offsetStep*2];
+    nodes.forEach(id => {
+      if (assigned[id] !== undefined) return;
+      // Find used offsets by neighbors
+      const usedOffsets = new Set();
+      adj[id].forEach(neighbor => {
+        if (assigned[neighbor] !== undefined) usedOffsets.add(assigned[neighbor]);
+      });
+      // Assign first available offset
+      for (const off of offsets) {
+        if (!usedOffsets.has(off)) {
+          assigned[id] = off;
+          nodeOffsets[id] = off;
+          break;
+        }
+      }
+    });
+  });
+  // Calculate max vertical offset for each level
+  const levelMaxOffset = {};
+  usedLevels.forEach(level => {
+    const nodes = levels[level];
+    let maxOffset = 0;
+    nodes.forEach(id => { maxOffset = Math.max(maxOffset, Math.abs(nodeOffsets[id] || 0)); });
+    levelMaxOffset[level] = maxOffset;
+  });
+  // Calculate Y position for each level with adaptive spacing
+  let currentY = startY;
+  usedLevels.forEach(level => {
+    const nodes = levels[level];
+    const totalWidth = (nodes.length - 1) * nodeSpacing;
+    const startX = -totalWidth / 2;
+    nodes.forEach((id, i) => {
+      const n = topo.nodes.get(id);
+      if (n) {
+        n.x = startX + i * nodeSpacing;
+        n.y = currentY + (nodeOffsets[id] || 0);
+      }
+    });
+    const extraSpacing = Math.max(0, levelMaxOffset[level] * 2 - baseLevelSpacing * 0.3);
+    currentY += baseLevelSpacing + extraSpacing;
+  });
+}
+
+// Incremental vis update (no rebuild)
+function updateVis(ch) {
+  const { topo, visNodes, visEdges } = ch;
+  const isSearch = ch.def && ch.def.id === 'SEARCH' && ch.def.searchType === 'bfs';
+  const isChannel = ch.def && ch.def.id === 'CHANNEL';
+  const canvas = document.getElementById('topo-canvas');
+  const chIdx = chapters.indexOf(ch);
+  
+  // Run dagre layout for TOPO/SEARCH chapters
+  if (chIdx > 0 && typeof dagre !== 'undefined') {
+    dagreLayout(topo, nodeLevel);
+  }
+  // If network doesn't exist yet, create it
+  if (!ch.network) {
+    visNodes.clear(); visEdges.clear();
+    // Add all discovered nodes
+    topo.nodes.forEach(n => {
+      if (!n.discovered) return;
+      const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+      let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+      if (isSearch && bfsState.sourceGpu !== null) {
+        if (n.id === 'gpu-'+bfsState.sourceGpu) { bg='#002233'; border='#00e5ff'; borderWidth=6; fontColor='#00e5ff'; }
+        else if (bfsState.currentNode === n.id) { bg='#0c2d6b'; border='#58a6ff'; borderWidth=5; fontColor='#58a6ff'; }
+        else if (bfsState.queue.includes(n.id)) { bg='#3d2e00'; border='#d29922'; borderWidth=4; fontColor='#d29922'; }
+      }
+      let label = n.label;
+      if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
+      // Use dagre-computed position if available
+      const pos = (chIdx > 0 && n.x !== undefined) ? {x: n.x, y: n.y} : {};
+      visNodes.add({ id:n.id, label:label, ...pos, opacity:1.0,
+        color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
+        title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined });
+    });
+    // Add all discovered edges
+    topo.edges.forEach(e => {
+      if (!e.discovered) return;
+      let ec='#3fb950', ew=2, ed=false;
+      if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
+      const arrowOpts = e.bidirectional
+        ? {from:{enabled:true,scaleFactor:0.5}, to:{enabled:true,scaleFactor:0.5}}
+        : {to:{enabled:true,scaleFactor:0.5}};
+      visEdges.add({ from:e.from, to:e.to, label:e.label||undefined,
+        color:{color:ec}, width:ew, dashes:ed, arrows:arrowOpts,
+        title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined });
+    });
+    ch.network = new vis.Network(canvas, {nodes:visNodes, edges:visEdges}, getVisOptions(curCh));
+    ch.network.fit({animation:false});
+    return;
+  }
+  
+  // Update existing nodes
+  const existingNodes = new Set(visNodes.getIds());
+  // Check if any newly discovered nodes are missing dagre positions
+  let needRedagre = false;
+  if (chIdx > 0) {
+    topo.nodes.forEach(n => {
+      if (n.discovered && n.x === undefined) needRedagre = true;
+    });
+    if (needRedagre) {
+      dagreLayout(topo, nodeLevel);
+    }
+  }
+  topo.nodes.forEach(n => {
+    if (!n.discovered) { if (existingNodes.has(n.id)) visNodes.remove(n.id); return; }
+    const c = NODE_COLORS[n.type] || {bg:'#1c2128', border:'#30363d'};
+    let bg = c.bg, border = c.border, borderWidth = 3, fontColor = c.border;
+    if (isSearch && bfsState.sourceGpu !== null) {
+      if (n.id === 'gpu-'+bfsState.sourceGpu) { bg='#002233'; border='#00e5ff'; borderWidth=6; fontColor='#00e5ff'; }
+      else if (bfsState.currentNode === n.id) { bg='#0c2d6b'; border='#58a6ff'; borderWidth=5; fontColor='#58a6ff'; }
+      else if (bfsState.queue.includes(n.id)) { bg='#3d2e00'; border='#d29922'; borderWidth=4; fontColor='#d29922'; }
+    }
+    let label = n.label;
+    if (isSearch && n.type==='gpu' && bfsState.dist[n.id]!==undefined) label = n.label+'\n'+bfsState.dist[n.id]+'GB';
+    // Use dagre-computed position for new nodes
+    const pos = (chIdx > 0 && n.x !== undefined) ? {x: n.x, y: n.y} : {};
+    const nodeData = { id:n.id, label:label, ...pos, opacity:1.0,
+      color:{background:bg,border:border}, borderWidth:borderWidth, font:{color:fontColor,size:15},
+      title:n.extra.detail?n.extra.detail.replace(/\n/g,'<br>'):undefined };
+    if (existingNodes.has(n.id)) visNodes.update(nodeData); else visNodes.add(nodeData);
+  });
+  // Remove nodes no longer discovered
+  existingNodes.forEach(id => {
+    if (!topo.nodes.has(id) || !topo.nodes.get(id).discovered) visNodes.remove(id);
+  });
+  // Update edges
+  const existingEdges = new Set(visEdges.getIds());
+  const edgeIds = new Set();
+  topo.edges.forEach(e => {
+    if (!e.discovered) return;
+    let ec='#3fb950', ew=2, ed=false;
+    if (e.extra&&e.extra.simplified) { ec='#ffd700'; ew=4; ed=false; }
+    const eid = e.from+'-'+e.to;
+    edgeIds.add(eid);
+    const arrowOpts = e.bidirectional
+      ? {from:{enabled:true,scaleFactor:0.5}, to:{enabled:true,scaleFactor:0.5}}
+      : {to:{enabled:true,scaleFactor:0.5}};
+    const edgeData = { id:eid, from:e.from, to:e.to, label:e.label||undefined,
+      color:{color:ec}, width:ew, dashes:ed, arrows:arrowOpts,
+      title:e.extra&&e.extra.detail?e.extra.detail.replace(/\n/g,'<br>'):undefined };
+    if (existingEdges.has(eid)) visEdges.update(edgeData); else visEdges.add(edgeData);
+  });
+  // Highlight prev edges (part of shortest path tree) - modify existing edges
+  if (isSearch && bfsState.sourceGpu !== null) {
+    Object.entries(bfsState.prev).forEach(([nodeId, prevId]) => {
+      if (prevId && topo.nodes.has(prevId) && topo.nodes.has(nodeId)) {
+        // Find and highlight existing edge
+        const eid1 = prevId+'-'+nodeId;
+        const eid2 = nodeId+'-'+prevId;
+        if (visEdges.get(eid1)) {
+          visEdges.update({id: eid1, color: {color: '#ff6b6b'}, width: 4, dashes: false});
+          edgeIds.add(eid1);
+        } else if (visEdges.get(eid2)) {
+          visEdges.update({id: eid2, color: {color: '#ff6b6b'}, width: 4, dashes: false});
+          edgeIds.add(eid2);
+        }
+      }
+    });
+  }
+  // Show channel information for CHANNEL chapter
+  if (isChannel) {
+    // Collect channel info from discovered nodes
+    const channels = [];
+    topo.nodes.forEach((n, id) => {
+      if (n.discovered && n.type === 'rank' && n.extra && n.extra.channelNum) {
+        channels.push({
+          id: id,
+          num: n.extra.channelNum,
+          label: n.label,
+          detail: n.extra.detail
+        });
+      }
+    });
+    // Sort by channel number
+    channels.sort((a, b) => a.num - b.num);
+    // Update info panel with channel summary
+    const infoPanel = document.getElementById('info-panel');
+    if (infoPanel && channels.length > 0) {
+      let html = '<div style="font-weight:600;margin-bottom:8px;color:#c9d1d9">Channel Summary</div>';
+      channels.forEach(ch => {
+        html += '<div style="margin-bottom:8px;padding:6px;background:#161b22;border-radius:4px">';
+        html += '<div style="color:#58a6ff;font-weight:600">'+ch.label+'</div>';
+        html += '<div style="font-size:10px;color:#8b949e;white-space:pre-line">'+ch.detail+'</div>';
+        html += '</div>';
+      });
+      infoPanel.innerHTML = html;
+    }
+  }
+  existingEdges.forEach(id => { if (!edgeIds.has(id)) visEdges.remove(id); });
+  ch.network.fit({animation:false});
+}
+
+// ═══ BFS State (for Chapter 3 Part 1) ═══
+let bfsState = {
+  sourceGpu: null,
+  dist: {},      // gpu -> bandwidth (number)
+  prev: {},      // gpu -> prev node id (string)
+  queue: [],     // list of node ids currently in queue
+  currentNode: null,  // node currently being processed (blue)
+  simplifiedEdges: [] // [{from, to, type, bw, hops}]
+};
+
+function resetBfsState() {
+  bfsState = { sourceGpu: null, dist:{}, prev:{}, queue:[], currentNode:null, simplifiedEdges:[] };
+}
+
+// Map node_id (from traces) to topo node id
+const NODE_ID_MAP = {};
+const GPU_HEX_TO_DEV = {};  // hex ID → device number mapping
+function mapNodeId(nodeType, nodeId) {
+  const key = nodeType+':'+nodeId;
+  if (NODE_ID_MAP[key]) return NODE_ID_MAP[key];
+  // For GPUs (type=0), find existing GPU node by checking all GPU nodes
+  if (nodeType === 0) {
+    for (const [id, node] of topo.nodes) {
+      if (node.type === 'gpu' && id.startsWith('gpu-')) {
+        // Found an existing GPU node, return it
+        NODE_ID_MAP[key] = id;
+        return id;
+      }
+    }
+  }
+  // Fallback: use last 4 hex chars
+  const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+  const typeName = typeNames[nodeType] || 'T'+nodeType;
+  const shortId = nodeId.slice(-4);
+  NODE_ID_MAP[key] = typeName.toLowerCase()+'-'+shortId;
+  return NODE_ID_MAP[key];
+}
+
+// ═══ Main state ═══
+let pl = [];
+let autoI = null, autoP = false;
+
+// ═══ Load / Init ═══
+let selectedRank = -1; // -1 = all ranks (dedup)
+
+function loadLog(text) {
+  RAW_LOG = text.split('\n').filter(l => l.includes('[YT-TRACE]'));
+  document.getElementById('loaded-file').textContent = RAW_LOG.length+' traces';
+  // Populate rank selector
+  const ranks = new Set();
+  RAW_LOG.forEach(l => {
+    const m = l.match(/\[(\d+)\]/);
+    if (m) ranks.add(parseInt(m[1]));
+  });
+  const sel = document.getElementById('rank-select');
+  sel.innerHTML = '<option value="-1">All (去重)</option>';
+  [...ranks].sort((a,b)=>a-b).forEach(r => {
+    sel.innerHTML += '<option value="'+r+'">Rank '+r+'</option>';
+  });
+  sel.style.display = ranks.size > 1 ? 'inline-block' : 'none';
+  selectedRank = -1;
+  initChapters(RAW_LOG);
+}
+
+document.getElementById('rank-select').onchange = function() {
+  selectedRank = parseInt(this.value);
+  initChapters(RAW_LOG);
+  switchChapter(curCh);
+};
+
+function initChapters(rawLog) {
+  RAW_LOG = rawLog || [];
+  pl = RAW_LOG.map((l,i) => ({ raw:l, parsed:parse(l) }));
+  
+  // All non-SRC line indices
+  const allLineIdx = [];
+  pl.forEach((l,i) => { if (l.parsed && l.parsed.type !== 'src') allLineIdx.push(i); });
+  
+  // Infer topology from SCAN traces
+  inferTopology(pl, allLineIdx);
+  
+  // Build chapters
+  chapters = buildChapters(pl, allLineIdx);
+  
+  // Pre-populate chapter 0 with inferred topology
+  const ch0 = chapters[0];
+  if (ch0 && Object.keys(NUMA_MAP).length > 0) {
+    Object.entries(NUMA_MAP).forEach(([numa,v]) => {
+      ch0.topo.addNode('numa-'+numa,'cpu','NUMA '+numa,{detail:''});
+      v.pcis.forEach(busid => {
+        ch0.topo.addNode('pci-'+busid,'pci','PCI '+busid.slice(-5),{detail:''});
+        ch0.topo.addEdge('numa-'+numa,'pci-'+busid);
+      });
+      v.gpus.forEach((dev,i) => {
+        ch0.topo.addNode('gpu-'+dev,'gpu','GPU '+dev,{detail:''});
+        ch0.topo.addEdge('pci-'+v.pcis[i],'gpu-'+dev,'PCIe');
+      });
+    });
+  }
+  
+  curCh = 0;
+  switchChapter(0);
+  window.addEventListener('resize', () => { chapters.forEach(ch => { if(ch.network) ch.network.fit(); }); });
+}
+
+// ═══ Chapter Navigation ═══
+function switchChapter(chIdx) {
+  if (chIdx < 0 || chIdx >= chapters.length) return;
+  
+  // Destroy current network before switching
+  const oldCh = chapters[curCh];
+  if (oldCh && oldCh.network) { try { oldCh.network.destroy(); } catch(e){} oldCh.network = null; }
+  
+  const ch = chapters[chIdx];
+  
+  // For chapter 0 (no dependency), preserve pre-populated topology if exists
+  if (ch.def.dependsOn < 0 && ch.topo.nodes.size > 0) {
+    curCh = chIdx;
+    go(-1);
+    updateChapterUI();
+    return;
+  }
+  
+  // For chapters with dependency, rebuild from scratch
+  ch.topo = newTopo();
+  
+  if (ch.def.dependsOn >= 0 && ch.def.dependsOn < chIdx) {
+    const dep = chapters[ch.def.dependsOn];
+    ch.baseTopo = dep.topo.cloneDiscovered();
+    
+    ch.baseTopo.nodes.forEach(n => {
+      ch.topo.addNode(n.id, n.type, n.label, {...n.extra});
+    });
+    ch.baseTopo.edges.forEach(e => {
+      ch.topo.addEdge(e.from, e.to, e.label);
+    });
+    ch.topo.nodes.forEach(n => n.discovered = true);
+    ch.topo.edges.forEach(e => e.discovered = true);
+  }
+  
+  curCh = chIdx;
+  resetBfsState();
+  go(-1);
+  updateChapterUI();
+}
+
+function updateChapterUI() {
+  const ch = chapters[curCh];
+  document.getElementById('ch-label').textContent = (curCh+1) + '. ' + ch.def.label;
+  document.getElementById('ch-total').textContent = '/ ' + chapters.length;
+  document.getElementById('btn-ch-prev').disabled = curCh <= 0;
+  document.getElementById('btn-ch-next').disabled = curCh >= chapters.length - 1;
+  document.getElementById('step-total').textContent = ch.lineIdx.length;
+  document.getElementById('step-num').textContent = ch.step+1;
+  // Show legend only for SEARCH chapter
+  // Legend toggle visibility based on chapter
+  const legendEl = document.getElementById('legend');
+  const toggleEl = document.getElementById('legend-toggle');
+  if (ch.def.id === 'SEARCH') {
+    toggleEl.style.display = 'block';
+  } else {
+    toggleEl.style.display = 'none';
+    legendEl.style.display = 'none';
+  }
+}
+
+// ═══ Step Navigation ═══
+function toggleLegend() {
+  const legend = document.getElementById('legend');
+  legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
+}
+
+function go(s) {
+  const ch = chapters[curCh];
+  if (s < -1) s = -1;
+  if (s >= ch.lineIdx.length) s = ch.lineIdx.length - 1;
+  ch.step = s;
+  
+  // Reset discovered state (keep nodes/edges structure)
+  ch.topo.nodes.forEach(n => n.discovered = false);
+  ch.topo.edges.forEach(e => e.discovered = false);
+  
+  // Re-mark base as discovered (if exists)
+  if (ch.baseTopo) {
+    ch.baseTopo.nodes.forEach(n => { const tn = ch.topo.nodes.get(n.id); if(tn) tn.discovered = true; });
+    ch.baseTopo.edges.forEach(e => { ch.topo.markEdge(e.from, e.to); });
+  }
+  
+  // Apply traces from previous chapter's base (to ensure all dep nodes exist)
+  if (ch.def.dependsOn >= 0) {
+    const dep = chapters[ch.def.dependsOn];
+    // Run all of dep's traces to make sure their nodes exist in our topo
+    for (let i = 0; i < dep.lineIdx.length; i++) {
+      const p = pl[dep.lineIdx[i]].parsed;
+      if (p) proc(p, ch.topo);
+    }
+    // Mark them as discovered
+    dep.topo.nodes.forEach((dn, did) => {
+      const tn = ch.topo.nodes.get(did);
+      if (tn) tn.discovered = true;
+    });
+  }
+  
+  // Apply this chapter's traces up to step s
+  for (let i = 0; i <= s && i < ch.lineIdx.length; i++) {
+    const p = pl[ch.lineIdx[i]].parsed;
+    if (p) proc(p, ch.topo);
+  }
+  
+  // Render incrementally
+  updateVis(ch);
+  
+  // Log
+  showLog();
+  
+  // Step info
+  document.getElementById('step-num').textContent = ch.step + 1;
+  document.getElementById('btn-prev').disabled = ch.step < 0;
+  document.getElementById('btn-next').disabled = ch.step >= ch.lineIdx.length - 1;
+  
+  // Stats
+  let nd=0,ed=0;
+  ch.topo.nodes.forEach(n => { if(n.discovered) nd++; });
+  ch.topo.edges.forEach(e => { if(e.discovered) ed++; });
+  document.getElementById('stat-nodes').textContent = nd;
+  document.getElementById('stat-edges').textContent = ed;
+  const w = document.getElementById('warnings');
+  w.innerHTML = missingWarnings.length ? missingWarnings.join('<br>') : '';
+}
+
+// ═══ Process one trace ═══
+function proc(p, topo) {
+  const d = p.data;
+  switch(p.type) {
+    case 'cpu':
+      topo.addNode('numa-'+d.numa,'cpu','NUMA '+d.numa,{detail:'arch='+d.arch+'\nvendor='+d.vendor+'\nfamily='+d.family+' model='+d.model+'\naffinity='+d.affinity});
+      topo.discoverNode('numa-'+d.numa);
+      break;
+    case 'pci': {
+      const b=d.busid, id='pci-'+b;
+      topo.addNode(id,'pci','PCI '+b.slice(-5),{detail:'vendor='+(d.vendor||'')+'\ndevice='+(d.device||'')});
+      topo.discoverNode(id);
+      const nid = BUSID_NUMA[b];
+      if (nid !== undefined) topo.markEdge('numa-'+nid, id);
+      break;
+    }
+    case 'gpu': {
+      const dv=parseInt(d.dev), id='gpu-'+dv;
+      topo.addNode(id,'gpu','GPU '+dv,{sm:d.sm,detail:'SM '+d.sm+'\nbusid='+d.busid});
+      topo.discoverNode(id);
+      topo.markEdge('pci-'+d.busid, id);
+      // Build hex ID to device number mapping for GPUs
+      // busid format: '0000:27:00.0' → hex format: '0x27000'
+      if (d.busid) {
+        const parts = d.busid.split(':');
+        const lastPart = parts[parts.length-1].split('.')[0];  // '00'
+        const middlePart = parts[parts.length-2];  // '27'
+        const hexId = '0x'+middlePart+'000';  // '0x27000'
+        GPU_HEX_TO_DEV[hexId] = dv;
+      }
+      break;
+    }
+    case 'rank': {
+      const dv=parseInt(d.rank), id='gpu-'+dv, gn=topo.nodes.get(id);
+      if (gn) {
+        gn.extra.rank=d.rank; gn.extra.gdr=d.gdr;
+        gn.extra.detail='SM '+(gn.extra.sm||'?')+'\nrank='+d.rank+' gdr='+d.gdr+' mlopart='+d.mlopart;
+        gn.label='GPU '+dv+'\nrank '+d.rank;
+        topo.discoverNode(id);
+      }
+      break;
+    }
+    case 'topo_gpu': {
+      // [TOPO] gpu dev=0 id=0x27000 rank=0 cc=120 gdr=0
+      // This trace provides the mapping from hex ID to device number
+      const dev = parseInt(d.dev);
+      const hexId = d.id;
+      if (!isNaN(dev) && hexId) {
+        GPU_HEX_TO_DEV[hexId] = dev;
+        const newId = 'gpu-'+dev;
+        // Find existing GPU node that might need renaming
+        let existingNode = null;
+        let existingKey = null;
+        for (const [key, node] of topo.nodes) {
+          if (node.type === 'gpu' && key.startsWith('gpu-') && key !== newId) {
+            // Check if this node doesn't have a proper device number ID yet
+            // (i.e., it was created with hex ID like gpu-27000)
+            const num = parseInt(key.replace('gpu-', ''));
+            if (isNaN(num) || num > 100) {  // Device numbers are small (0-7), hex IDs are large
+              existingNode = node;
+              existingKey = key;
+              break;
+            }
+          }
+        }
+        if (existingNode && existingKey) {
+          // Rename node from gpu-XXXXX to gpu-N
+          topo.nodes.delete(existingKey);
+          existingNode.id = newId;
+          topo.nodes.set(newId, existingNode);
+        }
+        // Update or create GPU node
+        const gpuNode = topo.nodes.get(newId) || existingNode;
+        if (gpuNode) {
+          gpuNode.extra = gpuNode.extra || {};
+          gpuNode.extra.hexId = hexId;
+          gpuNode.extra.rank = parseInt(d.rank);
+          gpuNode.extra.cc = parseInt(d.cc);
+          gpuNode.extra.gdr = parseInt(d.gdr);
+          gpuNode.label = 'GPU '+dev+'\nrank '+d.rank;
+        }
+      }
+      break;
+    }
+    case 'topo_node': {
+      // [TOPO] node type=0 id=0x... [dev=3 rank=3 cc=120 gdr=0] nlinks=3
+      // Fields vary by type: GPU has dev/rank/cc/gdr, DEV has cc, others have only nlinks
+      const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+      const t = parseInt(d.type);
+      const id = d.id;
+      const isGpu = t === 0;  // GPU is type 0, regardless of dev field
+      // For GPUs, try to find existing device number mapping
+      let nodeId;
+      if (isGpu) {
+        // Check if we already have a mapping for this hex ID
+        const existingGpu = [...topo.nodes.values()].find(n => n.type === 'gpu' && n.extra && n.extra.hexId === id);
+        if (existingGpu) {
+          nodeId = existingGpu.id;  // Use existing GPU node
+        } else {
+          // Create new GPU with hex ID for now, will be remapped later
+          nodeId = 'gpu-'+id.slice(-4);
+        }
+      } else {
+        nodeId = (typeNames[t]||'T'+t).toLowerCase()+'-'+id;
+      }
+      // Map cpu-0xN to numa-N (reuse existing NUMA node IDs)
+      if (t === 3 && !isGpu) {
+        const numaIdx = parseInt(id, 16);
+        if (!isNaN(numaIdx) && topo.nodes.has('numa-'+numaIdx)) {
+          nodeId = 'numa-'+numaIdx;  // Reuse existing NUMA node
+        }
+      }
+      // Descriptive labels
+      let label;
+      if (isGpu) {
+        // Try to get device number from existing GPU node, otherwise use hex ID
+        const existingGpu = [...topo.nodes.values()].find(n => n.type === 'gpu' && n.extra && n.extra.hexId === id);
+        label = existingGpu ? existingGpu.label : 'GPU 0x'+id.slice(-4);
+      } else if (t === 3) {  // CPU/NUMA
+        label = 'NUMA '+parseInt(id,16);
+      } else if (t === 8) {  // DEV (PCIe bridge)
+        label = 'PCIe Bridge\n0x'+id.slice(-4);
+      } else {
+        label = (typeNames[t]||'T'+t)+'\n0x'+id.slice(-4);
+      }
+      // Build detail string with available fields
+      let detail = 'type='+typeNames[t]+'\nid=0x'+id;
+      if (d.dev !== undefined) detail += '\ndev='+d.dev;
+      if (d.rank !== undefined) detail += '\nrank='+d.rank;
+      if (d.cc !== undefined) detail += '\ncc='+d.cc;
+      if (d.gdr !== undefined) detail += '\ngdr='+d.gdr;
+      detail += '\nnlinks='+d.nlinks;
+      const nodeType = isGpu ? 'gpu' : (typeNames[t]||'pci').toLowerCase();
+      topo.addNode(nodeId, nodeType, label, {detail});
+      topo.discoverNode(nodeId);
+      // Store mapping: node_type:node_id -> topoId (for BFS traces)
+      NODE_ID_MAP[t+':'+id] = nodeId;
+      break;
+    }
+    case 'topo_link': {
+      // [TOPO] link from_type=0 from_id=0x... to_type=1 to_id=0x... link_type=4 bw=48 total_bw=48
+      const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+      const linkNames = ['LOC','NVL','NVB','C2C','PCI','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const fType = parseInt(d.from_type);
+      const tType = parseInt(d.to_type);
+      const fDev = parseInt(d.from_dev);
+      const tDev = parseInt(d.to_dev);
+      const fIsGpu = fType===0 && !isNaN(fDev) && fDev>=0;
+      const tIsGpu = tType===0 && !isNaN(tDev) && tDev>=0;
+      // Build hex ID to device number mapping for GPUs
+      if (fIsGpu && d.from_id) GPU_HEX_TO_DEV[d.from_id] = fDev;
+      if (tIsGpu && d.to_id) GPU_HEX_TO_DEV[d.to_id] = tDev;
+      const lbl = linkNames[parseInt(d.link_type)] || 'L'+d.link_type;
+      let fId = fIsGpu ? 'gpu-'+fDev : (typeNames[fType]||'T'+fType).toLowerCase()+'-'+d.from_id;
+      let tId = tIsGpu ? 'gpu-'+tDev : (typeNames[tType]||'T'+tType).toLowerCase()+'-'+d.to_id;
+      // Map cpu-0xN to numa-N
+      if (fType===3 && !fIsGpu) { const n=parseInt(d.from_id,16); if(!isNaN(n) && topo.nodes.has('numa-'+n)) fId='numa-'+n; }
+      if (tType===3 && !tIsGpu) { const n=parseInt(d.to_id,16); if(!isNaN(n) && topo.nodes.has('numa-'+n)) tId='numa-'+n; }
+      // Helper for descriptive names
+      function topoName(type, dev, id) {
+        if (type===0 && !isNaN(dev) && dev>=0) return 'GPU '+dev;
+        if (type===3) return 'NUMA '+parseInt(id,16);
+        if (type===8) return 'PCIe Bridge 0x'+id.slice(-4);
+        // Ensure id doesn't already start with 0x
+        const idStr = id.startsWith('0x') ? id : '0x'+id;
+        return (typeNames[type]||'T'+type)+' '+idStr;
+      }
+      const fName = topoName(fType, fDev, d.from_id);
+      const tName = topoName(tType, tDev, d.to_id);
+      const detail = 'link_type='+linkNames[parseInt(d.link_type)]+'\nbw='+d.bw+' GB/s\ntotal_bw='+d.total_bw+' GB/s\nfrom='+fName+'\nto='+tName;
+      const fTypeStr = fIsGpu ? 'gpu' : (typeNames[fType]||'pci').toLowerCase();
+      const tTypeStr = tIsGpu ? 'gpu' : (typeNames[tType]||'pci').toLowerCase();
+      topo.addNode(fId, fTypeStr, fName, {});
+      topo.addNode(tId, tTypeStr, tName, {});
+      topo.addEdge(fId, tId, lbl+' '+d.bw+'GB', {detail});
+      topo.discoverNode(fId);
+      topo.discoverNode(tId);
+      topo.markEdge(fId, tId);
+      break;
+    }
+    case 'bfs_start': {
+      // [SEARCH] bfs_start gpu=0
+      resetBfsState();
+      const gpuRank = parseInt(d.gpu);
+      bfsState.sourceGpu = gpuRank;
+      bfsState.dist[gpuRank] = 0;
+      bfsState.queue = ['gpu-'+gpuRank];
+      bfsState.currentNode = null;
+      // Ensure GPU node exists
+      const gid = 'gpu-'+gpuRank;
+      topo.addNode(gid, 'gpu', 'GPU '+gpuRank, {});
+      topo.discoverNode(gid);
+      break;
+    }
+    case 'bfs_dequeue': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      bfsState.currentNode = topoId;
+      bfsState.queue = bfsState.queue.filter(id => id !== topoId);
+      break;
+    }
+    case 'bfs_enqueue': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      if (!topo.nodes.has(topoId)) {
+        const isGpu = nodeType === 0;
+        const typeNames = ['GPU','PCI','NVS','CPU','NIC','NET','GIN','RMA','DEV','CXB'];
+        const typeName = typeNames[nodeType] || 'T'+nodeType;
+        const nodeTypeStr = isGpu ? 'gpu' : typeName.toLowerCase();
+        topo.addNode(topoId, nodeTypeStr, (isGpu?'GPU ':(typeName+' 0x'))+nodeId.slice(-4), {});
+      }
+      topo.discoverNode(topoId);
+      if (!bfsState.queue.includes(topoId)) bfsState.queue.push(topoId);
+      break;
+    }
+    case 'bfs_improve': {
+      const nodeType = parseInt(d.node_type);
+      const nodeId = d.node_id;
+      let topoId = mapNodeId(nodeType, nodeId);
+      bfsState.dist[topoId] = parseFloat(d.new_bw);
+      bfsState.prev[topoId] = bfsState.currentNode;
+      break;
+    }
+    case 'bfs_gpu_found': {
+      // [SEARCH] bfs_gpu_found gpu=0 peer=1 type=NVL bw=48 hops=2
+      const srcGpu = parseInt(d.gpu);
+      const peerGpu = parseInt(d.peer);
+      const srcId = 'gpu-'+srcGpu;
+      const dstId = 'gpu-'+peerGpu;
+      const pathTypes = ['LOC','NVL','NVB','C2C','PIX','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const typeIdx = pathTypes.indexOf(d.type);
+      const lbl = d.type || 'T'+typeIdx;
+      // Add simplified edge
+      topo.addNode(srcId, 'gpu', 'GPU '+srcGpu, {});
+      topo.addNode(dstId, 'gpu', 'GPU '+peerGpu, {});
+      topo.discoverNode(srcId);
+      topo.discoverNode(dstId);
+      // Check if simplified edge already exists for this pair
+      const existingSimplified = topo.edges.find(e => 
+        e.extra && e.extra.simplified && 
+        ((e.from===srcId&&e.to===dstId)||(e.from===dstId&&e.to===srcId))
+      );
+      if (!existingSimplified) {
+        // Add new simplified edge
+        topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops, simplified:true});
+      }
+      topo.markEdge(srcId, dstId);  // Always discover the simplified edge
+      bfsState.simplifiedEdges.push({from:srcId, to:dstId, type:lbl, bw:parseFloat(d.bw), hops:parseInt(d.hops)});
+      break;
+    }
+    case 'bfs_done': {
+      bfsState.currentNode = null;
+      bfsState.queue = [];
+      break;
+    }
+    case 'search_path': {
+      // [SEARCH] gpu_path gpu=0 peer=1 type=8 bw=48 hops=4
+      const srcId = 'gpu-'+parseInt(d.gpu);
+      const dstId = 'gpu-'+parseInt(d.peer);
+      const pathTypes = ['LOC','NVL','NVB','C2C','PIX','PXB','P2C','PXN','PHB','SYS','NET','DIS'];
+      const lbl = pathTypes[parseInt(d.type)] || 'T'+d.type;
+      topo.addNode(srcId, 'gpu', 'GPU '+d.gpu, {});
+      topo.addNode(dstId, 'gpu', 'GPU '+d.peer, {});
+      topo.addEdge(srcId, dstId, lbl+' '+d.bw+'GB '+d.hops+'h', {detail:'path_type='+lbl+'\nbw='+d.bw+' GB/s\nhops='+d.hops});
+      topo.discoverNode(srcId);
+      topo.discoverNode(dstId);
+      topo.markEdge(srcId, dstId);
+      break;
+    }
+    case 'search_channel':
+    case 'dfs_found': {
+      // [SEARCH] dfs_found channel=1 pattern=4 bwIntra=40 nHops=36
+      const patterns = ['RING','TREE','NVLS','P2P','SPLIT_TREE','BALANCED_TREE','COLLNET_TREE','COLLNET_DIRECT'];
+      const patName = patterns[parseInt(d.pattern)] || 'P'+d.pattern;
+      const info = 'Channel #'+d.channel+'\npattern='+patName+'\nbwIntra='+d.bwIntra+' GB/s\nnHops='+d.nHops;
+      const chId = 'channel-'+d.channel;
+      topo.addNode(chId, 'rank', 'Ch'+d.channel+' '+patName, {detail:info, channelNum:parseInt(d.channel)});
+      topo.discoverNode(chId);
+      break;
+    }
+    case 'dfs_try': {
+      // [SEARCH] dfs_try step=0 from_gpu=0 to_gpu=1 channel=0
+      const fromGpu = parseInt(d.from_gpu);
+      const toGpu = parseInt(d.to_gpu);
+      const step = parseInt(d.step);
+      const channel = parseInt(d.channel);
+      // Store DFS state for visualization
+      if (!bfsState.dfsState) bfsState.dfsState = {currentStep: -1, tryingEdge: null, channel: -1};
+      bfsState.dfsState.currentStep = step;
+      bfsState.dfsState.tryingEdge = {from: 'gpu-'+fromGpu, to: 'gpu-'+toGpu};
+      bfsState.dfsState.channel = channel;
+      break;
+    }
+    case 'dfs_reserve': {
+      // [SEARCH] dfs_reserve gpu=1 channel=0
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Mark GPU as reserved
+      if (!bfsState.dfsState) bfsState.dfsState = {};
+      if (!bfsState.dfsState.reserved) bfsState.dfsState.reserved = [];
+      bfsState.dfsState.reserved.push('gpu-'+gpu);
+      break;
+    }
+    case 'dfs_backtrack': {
+      // [SEARCH] dfs_backtrack gpu=1 channel=0
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Remove GPU from reserved
+      if (bfsState.dfsState && bfsState.dfsState.reserved) {
+        bfsState.dfsState.reserved = bfsState.dfsState.reserved.filter(id => id !== 'gpu-'+gpu);
+      }
+      break;
+    }
+    case 'dfs_step': {
+      // [SEARCH] dfs_step step=2 gpu=1 channel=0
+      const step = parseInt(d.step);
+      const gpu = parseInt(d.gpu);
+      const channel = parseInt(d.channel);
+      // Update DFS state
+      if (!bfsState.dfsState) bfsState.dfsState = {};
+      bfsState.dfsState.currentStep = step;
+      bfsState.dfsState.currentGpu = 'gpu-'+gpu;
+      bfsState.dfsState.channel = channel;
+      break;
+    }
+    case 'search_other':
+      break;
+    case 'topo_other':
+      break;
+  }
+}
+
+// ═══ Log display ═══
+// Track if user is manually scrolling
+let userScrolled = false;
+
+document.getElementById('log-stream').addEventListener('scroll', function() {
+  userScrolled = true;
+});
+
+let logBuilt = false;
+let logLineEls = [];
+let logLastCenter = -1;
+
+function buildLogWindow(centerIdx, range) {
+  const el = document.getElementById('log-stream');
+  el.innerHTML = '';
+  logLineEls = [];
+  const start = Math.max(0, centerIdx - range);
+  const end = Math.min(pl.length, centerIdx + range + 1);
+  for (let i = start; i < end; i++) {
+    const l = pl[i];
+    const e = document.createElement('div'); e.className='log-line';
+    if (l.parsed) {
+      e.className += ' yt-trace ' + l.parsed.type;
+      e.innerHTML = l.raw.replace('[YT-TRACE]','<span class="tag">[YT-TRACE]</span>');
+    } else { e.textContent=l.raw; e.style.color='#484f58'; }
+    el.appendChild(e);
+    logLineEls[i] = e;
+  }
+  logLastCenter = centerIdx;
+  logBuilt = true;
+}
+
+function scrollToCenter() {
+  const el = document.getElementById('log-stream');
+  const cur = document.querySelector('.log-line.current');
+  if (!cur) return;
+  el.scrollTop = cur.offsetTop - el.clientHeight/2 + cur.offsetHeight/2;
+}
+
+function showLog() {
+  const ch = chapters[curCh];
+  const curLine = ch.step>=0 && ch.step<ch.lineIdx.length ? ch.lineIdx[ch.step] : -1;
+  if (curLine < 0) return;
+  // Rebuild window if needed
+  if (!logBuilt || Math.abs(curLine - logLastCenter) > 30) {
+    buildLogWindow(curLine, 60);
+    userScrolled = false;
+  }
+  // Remove old current
+  const old = document.querySelector('.log-line.current');
+  if (old) old.classList.remove('current');
+  // Add new current
+  if (logLineEls[curLine]) {
+    logLineEls[curLine].classList.add('current');
+    if (!userScrolled) scrollToCenter();
+  }
+}
+
+// ═══ Event wiring ═══
+document.getElementById('btn-next').onclick = () => { userScrolled = false; go(chapters[curCh].step + 1); };
+document.getElementById('btn-prev').onclick = () => { userScrolled = false; go(chapters[curCh].step - 1); };
+document.getElementById('btn-reset').onclick = () => { stopAuto(); go(-1); };
+document.getElementById('btn-auto').onclick = toggleAuto;
+document.getElementById('btn-ch-next').onclick = () => switchChapter(curCh + 1);
+document.getElementById('btn-ch-prev').onclick = () => switchChapter(curCh - 1);
+document.getElementById('btn-load').onclick = () => document.getElementById('file-input').click();
+document.getElementById('file-input').onchange = function(e) {
+  const file = e.target.files[0]; if (!file) return;
+  document.getElementById('loaded-file').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => loadLog(e.target.result);
+  reader.readAsText(file);
+};
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName==='INPUT') return;
+  if (e.key==='ArrowRight'||e.key===' ') { e.preventDefault(); go(chapters[curCh].step+1); }
+  if (e.key==='ArrowLeft') { e.preventDefault(); go(chapters[curCh].step-1); }
+  if (e.key==='r') { stopAuto(); go(-1); }
+  if (e.key==='a') toggleAuto();
+  if (e.key==='n'||e.key==='.') { stopAuto(); switchChapter(curCh+1); }
+  if (e.key==='p'||e.key===',') { stopAuto(); switchChapter(curCh-1); }
+});
+
+function toggleAuto() {
+  autoP = !autoP;
+  document.getElementById('btn-auto').textContent = autoP ? '⏹' : '▶▶';
+  document.getElementById('btn-auto').className = autoP ? 'primary' : '';
+  if (autoP) {
+    const ch = chapters[curCh];
+    autoI = setInterval(() => {
+      if (ch.step >= ch.lineIdx.length-1) { toggleAuto(); return; }
+      go(ch.step + 1);
+    }, 700);
+  } else { clearInterval(autoI); autoI=null; }
+}
+function stopAuto() { if (autoP) toggleAuto(); }
+
+// Start empty
+initChapters([]);
+</script>
+</body>
+</html>

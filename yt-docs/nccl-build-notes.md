@@ -54,15 +54,25 @@ scp /Users/lichuan/storage_yuntun/nccl/src/include/debug.h \
 
 ## 运行测试
 
-```bash
-# 静态链接（推荐，避免 LD_LIBRARY_PATH）
-/usr/local/cuda/bin/nvcc -o /tmp/probe /tmp/probe.cu \
-    -I/repo/nccl/build/include /repo/nccl/build/lib/libnccl_static.a \
-    -lnvidia-ml -lcudart -lpthread -ldl
+### ⚠️ 必须使用动态链接（不要用静态库）
 
-# 运行（NCCL 调试输出到 stderr）
-NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=ALL /tmp/probe 2>/tmp/probe.log
+NCCL 2.30.7 在 5090 上**静态链接**（`libnccl_static.a`）会导致 NULL 函数指针崩溃：
+- `dmesg` 显示 `segfault at 0 ip 0000000000000000`
+- 原因是 CUDA 驱动 PFN（`cuGetProcAddress`）在静态链接时解析失败
+- 动态链接 `.so` 完全正常
+
+```bash
+# 编译（动态链接）
+/usr/local/cuda/bin/nvcc -o /tmp/probe /tmp/probe.cu \
+    -I/repo/nccl/build/include \
+    -L/repo/nccl/build/lib -lnccl -lnvidia-ml -lcudart -lpthread -ldl
+
+# 运行（指定 LD_LIBRARY_PATH 指向构建的 .so）
+LD_LIBRARY_PATH=/repo/nccl/build/lib \
+    NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=ALL /tmp/probe 2>/tmp/probe.log
 
 # 查看 YT-TRACE 输出
 grep 'YT-TRACE' /tmp/probe.log
 ```
+
+> 也可以把 `LD_LIBRARY_PATH` 写入 `~/.bashrc` 或直接替换系统 NCCL 的 .so。

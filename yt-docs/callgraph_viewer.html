@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NCCL Callgraph Trace Viewer (Range-loaded)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; line-height: 1.5; color: #1a1a1a; background: #fafafa; }
+  #toolbar { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; padding: 8px 16px; z-index: 10; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #toolbar h1 { font-size: 14px; font-weight: 600; margin-right: 16px; }
+  #toolbar .meta { color: #666; font-size: 12px; }
+  #toolbar button { padding: 4px 10px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  #toolbar button:hover { background: #e8e8e8; }
+  #toolbar input[type=text] { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 220px; }
+  #tree-scroll { overflow-x: auto; padding: 8px 16px 40px; }
+  #tree { }
+  .node { display: flex; align-items: flex-start; padding: 1px 0; min-width: max-content; }
+  .node .toggle { width: 16px; cursor: pointer; user-select: none; color: #999; flex-shrink: 0; text-align: center; }
+  .node .toggle:hover { color: #333; }
+  .node .toggle.leaf { cursor: default; }
+  .node .toggle.loading { color: #e67e22; animation: spin 1s linear infinite; }
+  .children { border-left: 1px solid #e0e0e0; margin-left: 8px; padding-left: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .node .content { flex: 1 0 auto; min-width: 0; }
+  .node .line { white-space: nowrap; }
+  .node .callid { color: #999; font-size: 11px; }
+  .node .fn { font-weight: 600; }
+  .node .fn.Compute { color: #c0392b; }
+  .node .fn.SearchInit { color: #27ae60; }
+  .node .fn.SearchRec { color: #2980b9; }
+  .node .fn.SearchTryGpu { color: #8e44ad; }
+  .node .fn.SearchRecGpu { color: #d35400; }
+  .node .fn.FollowPath { color: #16a085; }
+  .node .fn.CompareGraphs { color: #7f8c8d; }
+  .node .fn.SearchNextGpuSort { color: #f39c12; }
+  .node .fn.ReplayGetGpu { color: #34495e; }
+  .node .args { color: #555; font-size: 12px; }
+  .node .args .k { color: #888; }
+  .node .args .v.true { color: #27ae60; font-weight: 600; }
+  .node .args .v.false { color: #c0392b; }
+  .node .exit { color: #666; font-size: 12px; margin-left: 8px; }
+  /* Args toggle button (expand/collapse to multi-line) */
+  .args-toggle { display: inline-block; cursor: pointer; color: #3498db; font-size: 11px; margin-right: 4px; padding: 0 2px; user-select: none; vertical-align: middle; }
+  .args-toggle:hover { color: #2980b9; background: #ebf5fb; border-radius: 2px; }
+  /* Expanded args: block layout, each arg on its own line */
+  .args.expanded, .exit.expanded { display: block; margin: 2px 0 2px 24px; padding: 4px 8px; background: #f8f9fa; border-left: 2px solid #d0d3d4; border-radius: 0 4px 4px 0; font-family: "SF Mono", Consolas, monospace; line-height: 1.6; }
+  .args.expanded > div, .exit.expanded > div { white-space: nowrap; }
+  .v-obj { color: #8e44ad; font-weight: 600; }
+  .v-arr { color: #16a085; }
+  /* Diff highlighting: fields that changed between enter and exit */
+  .v.diff-changed { background: #fff3cd; color: #c0392b; font-weight: 600; border-radius: 2px; padding: 0 2px; }
+  .diff-old { color: #999; font-style: italic; text-decoration: line-through; font-size: 11px; }
+  .diff-arrow { color: #e67e22; font-weight: bold; }
+  /* Return reason: highlighted prominently in exit */
+  .v.reason-val { color: #8e44ad; background: #f4ecf7; font-weight: 600; padding: 0 4px; border-radius: 2px; border-left: 2px solid #8e44ad; }
+  .node .dur { color: #999; font-size: 11px; margin-left: 8px; }
+  .node .collapsed-info { color: #e67e22; font-size: 11px; font-style: italic; margin-left: 8px; }
+  .children { margin-left: 20px; border-left: 1px dotted #ddd; padding-left: 4px; }
+  .children.hidden { display: none; }
+  .node.highlight { background: #fff3cd; }
+  .node .depth-tag { color: #7f8c8d; font-size: 10px; background: #ecf0f1; padding: 1px 4px; border-radius: 3px; margin-right: 4px; }
+  .node .sibling-hint { color: #e67e22; font-size: 10px; margin-left: 8px; cursor: pointer; text-decoration: underline; font-style: italic; }
+  .node .sibling-hint:hover { color: #d35400; }
+  .node .marker { color: #c0392b; font-size: 10px; margin-left: 8px; font-style: italic; background: #ffeaa7; padding: 1px 6px; border-radius: 3px; }
+  /* Tooltip: hover on [data-tip] shows a bubble */
+  .k[data-tip], .v[data-tip], .fn[data-tip], [data-tip] { cursor: help; border-bottom: 1px dotted #aaa; }
+  #tooltip {
+    position: fixed; z-index: 9999; max-width: 420px; padding: 8px 10px;
+    background: #2c3e50; color: #ecf0f1; font-size: 12px; line-height: 1.5;
+    border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    pointer-events: none; opacity: 0; transition: opacity 0.12s;
+    white-space: normal; font-family: -apple-system, sans-serif;
+  }
+  #tooltip.show { opacity: 1; }
+  #tooltip .tip-key { color: #f1c40f; font-weight: 600; }
+  #tooltip .tip-val { color: #2ecc71; }
+  /* Parameter mode markers (in/out/inout/read) */
+  .mode-mark { display: inline-block; width: 12px; text-align: center; font-size: 11px; margin-right: 1px; font-weight: bold; }
+  .mode-mark.mode-in { color: #27ae60; }    /* green ▸ */
+  .mode-mark.mode-out { color: #c0392b; }   /* red ◂ */
+  .mode-mark.mode-inout { color: #e67e22; }  /* orange ◆ */
+  .mode-mark.mode-read { color: #95a5a6; }   /* gray · */
+  .node.dimmed { opacity: 0.3; }
+  #status { position: fixed; bottom: 8px; right: 12px; background: #fff; border: 1px solid #ddd; padding: 4px 10px; font-size: 11px; color: #666; border-radius: 4px; }
+  .legend { display: inline-flex; gap: 6px; font-size: 11px; }
+  .legend span { padding: 2px 6px; border-radius: 3px; color: #fff; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1>NCCL Callgraph Trace</h1>
+  <span class="meta" id="meta">Loading...</span>
+  <input type="text" id="search" placeholder="搜索 call_id / 函数名 / 参数...">
+  <button onclick="expandVisible()">展开可见</button>
+  <button onclick="collapseAll()">全部折叠</button>
+  <button onclick="expandToRecursive()" style="background:#e67e22;color:#fff">跳到第一次递归</button>
+  <label><input type="checkbox" id="autoExpand"> 自动展开首层</label>
+  <label><input type="checkbox" id="prefetchOn" checked> 预测性加载</label>
+  <span class="legend">
+    <span style="background:#c0392b">Compute</span>
+    <span style="background:#2980b9">SearchRec</span>
+    <span style="background:#8e44ad">TryGpu</span>
+    <span style="background:#d35400">RecGpu</span>
+    <span style="background:#16a085">FollowPath</span>
+  </span>
+  <span class="legend" style="margin-left:12px" title="参数模式标记">
+    <span style="background:#27ae60" title="入参">▸ 入参</span>
+    <span style="background:#c0392b" title="出参">◂ 出参</span>
+    <span style="background:#e67e22" title="被修改">◆ 修改</span>
+    <span style="background:#95a5a6" title="只读">· 只读</span>
+  </span>
+</div>
+<div id="tree-scroll"><div id="tree"></div></div>
+<div id="status">cache: 0 | fetches: 0 | bytes: 0</div>
+<div id="tooltip"></div>
+
+<script>
+// ============ Node store with range requests + prefetch ============
+class NodeStore {
+  constructor(url) {
+    this.url = url;
+    this.cache = new Map();          // index -> node object
+    this.prefetching = new Set();     // indices currently being prefetched
+    this.fetchCount = 0;
+    this.byteCount = 0;
+    this.header = null;
+  }
+  async _fetchRange(start, length) {
+    this.fetchCount++;
+    this.byteCount += length;
+    this._updateStatus();
+    const resp = await fetch(this.url, { headers: { Range: `bytes=${start}-${start+length-1}` } });
+    if (!resp.ok && resp.status !== 206) throw new Error(`fetch ${start}-${start+length} failed: ${resp.status}`);
+    return await resp.arrayBuffer();
+  }
+  _updateStatus() {
+    document.getElementById('status').textContent =
+      `cache: ${this.cache.size} | fetches: ${this.fetchCount} | bytes: ${(this.byteCount/1024/1024).toFixed(1)}MB`;
+  }
+  async fetchHeader() {
+    if (this.header) return this.header;
+    const buf = await this._fetchRange(0, 128);
+    const dv = new DataView(buf);
+    const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 4));
+    if (magic !== "NCGT") throw new Error("bad magic: " + magic);
+    this.header = {
+      version: dv.getUint32(4, true),
+      totalNodes: dv.getUint32(8, true),
+      rootCount: dv.getUint32(12, true),
+      recordSize: dv.getUint32(16, true),
+      nodesOffset: Number(dv.getBigUint64(20, true)),
+      argsOffset: Number(dv.getBigUint64(28, true)),
+      argsSize: Number(dv.getBigUint64(36, true)),
+      roots: [],
+    };
+    for (let i = 0; i < this.header.rootCount; i++) {
+      this.header.roots.push(dv.getUint32(44 + i*4, true));
+    }
+    return this.header;
+  }
+  _parseNode(dv, offset, index) {
+    const node = {
+      index,
+      callId: dv.getUint32(offset + 0, true),
+      parentIndex: dv.getUint32(offset + 4, true),
+      funcId: dv.getUint8(offset + 8),
+      depth: dv.getUint8(offset + 9),
+      childCount: dv.getUint16(offset + 10, true),
+      firstChildIndex: dv.getUint32(offset + 12, true),
+      duration: Number(dv.getBigInt64(offset + 16, true)),
+      enterArgsOffset: dv.getUint32(offset + 24, true),
+      enterArgsLen: dv.getUint16(offset + 28, true),
+      exitArgsOffset: dv.getUint32(offset + 30, true),
+      exitArgsLen: dv.getUint16(offset + 34, true),
+      subtreeSize: dv.getUint32(offset + 36, true),
+      enterArgs: null,
+      exitArgs: null,
+      childrenLoaded: false,
+    };
+    return node;
+  }
+  async fetchNode(index) {
+    if (this.cache.has(index)) return this.cache.get(index);
+    const buf = await this._fetchRange(this.header.nodesOffset + index * 64, 64);
+    const node = this._parseNode(new DataView(buf), 0, index);
+    this.cache.set(index, node);
+    return node;
+  }
+  // Fetch a node and all its direct children in one range request (they're contiguous).
+  async fetchNodeAndChildren(index) {
+    const node = await this.fetchNode(index);
+    if (node.childCount === 0 || node.firstChildIndex === 0xFFFFFFFF) {
+      node.childrenLoaded = true;
+      return { node, children: [] };
+    }
+    // Children are contiguous in BFS order
+    const childrenBuf = await this._fetchRange(
+      this.header.nodesOffset + node.firstChildIndex * 64,
+      node.childCount * 64
+    );
+    const dv = new DataView(childrenBuf);
+    const children = [];
+    for (let i = 0; i < node.childCount; i++) {
+      const childIndex = node.firstChildIndex + i;
+      if (!this.cache.has(childIndex)) {
+        const child = this._parseNode(dv, i * 64, childIndex);
+        this.cache.set(childIndex, child);
+      }
+      children.push(childIndex);
+    }
+    node.childrenLoaded = true;
+    return { node, children };
+  }
+  async fetchArgs(node) {
+    if (node.enterArgs !== null) return;
+    const tasks = [];
+    if (node.enterArgsLen > 0) {
+      tasks.push(this._fetchRange(this.header.argsOffset + node.enterArgsOffset, node.enterArgsLen).then(buf => {
+        node.enterArgs = JSON.parse(new TextDecoder().decode(buf));
+      }));
+    } else {
+      node.enterArgs = {};
+    }
+    if (node.exitArgsLen > 0) {
+      tasks.push(this._fetchRange(this.header.argsOffset + node.exitArgsOffset, node.exitArgsLen).then(buf => {
+        node.exitArgs = JSON.parse(new TextDecoder().decode(buf));
+      }));
+    } else {
+      node.exitArgs = null;
+    }
+    await Promise.all(tasks);
+  }
+  // Prefetch: load grandchildren (children of children) in background.
+  async prefetchGrandchildren(index) {
+    if (!document.getElementById('prefetchOn').checked) return;
+    const { children } = await this.fetchNodeAndChildren(index);
+    // For each child, fetch its children + args, but don't render.
+    for (const ci of children) {
+      if (this.prefetching.has(ci)) continue;
+      this.prefetching.add(ci);
+      // fire-and-forget
+      this.fetchNodeAndChildren(ci).then(() => {
+        const cn = this.cache.get(ci);
+        if (cn) return this.fetchArgs(cn);
+      }).catch(()=>{}).finally(() => this.prefetching.delete(ci));
+    }
+    // Also fetch args for immediate children
+    for (const ci of children) {
+      const cn = this.cache.get(ci);
+      if (cn && cn.enterArgs === null) {
+        this.fetchArgs(cn).catch(()=>{});
+      }
+    }
+  }
+}
+
+// ============ Rendering ============
+const FN_NAMES = {1:"ncclTopoCompute",2:"ncclTopoSearchInit",3:"ncclTopoSearchRec",4:"ncclTopoSearchTryGpu",5:"ncclTopoSearchRecGpu",6:"ncclTopoFollowPath",7:"ncclTopoCompareGraphs",8:"ncclTopoSearchNextGpuSort",9:"ncclTopoReplayGetGpu"};
+const PATTERN_NAMES = {1:"BALANCED_TREE",2:"SPLIT_TREE",3:"TREE",4:"RING",5:"NVLS",6:"COLLNET_DIRECT"};
+const FORCED_ORDER_NAMES = {0:"normal",1:"FORCED_ORDER_PCI",2:"FORCED_ORDER_REPLAY"};
+
+// === Tooltip metadata ===
+// For each parameter key, explain its meaning and (optionally) enumerate its values.
+// Function-level tooltip.
+const FN_META = {
+  1: 'ncclTopoCompute — 拓扑搜索主入口。对每种 pattern（RING/TREE/...）计算最优的 channel 排列方案。',
+  2: 'ncclTopoSearchInit — 搜索初始化。算出系统的总带宽、最大带宽等全局信息。',
+  3: 'ncclTopoSearchRec — 递归搜索核心。为每个 channel 找一个 GPU 环排列。nChannels+1 时递归调用自己找下一个 channel。',
+  4: 'ncclTopoSearchTryGpu — 尝试把某个 GPU 接入环。调 FollowPath 扣带宽，成功则调 RecGpu 继续递归，失败则回溯。',
+  5: 'ncclTopoSearchRecGpu — 处理一个已接入的 GPU。step==ngpus 时环闭合，递归调 SearchRec 找下一个 channel。',
+  6: 'ncclTopoFollowPath — 在拓扑图里找一条路径并扣减带宽（返回时回加）。是带宽管理的底层函数。',
+  7: 'ncclTopoCompareGraphs — 比较当前 graph 和 saveGraph，若更优则更新 saveGraph。',
+  8: 'ncclTopoSearchNextGpuSort — 按 PCI 顺序排序候选 GPU 列表。',
+  9: 'ncclTopoReplayGetGpu — Replay 阶段：从之前找到的 GPU 排列中取出第 step 个 GPU，加速后续 channel 搜索。'
+};
+const ARG_META = {
+  // === Top-level pointer params (graph/saveGraph objects) ===
+  graph: { desc: function(v){return '当前正在构建的拓扑方案（graph 指针）。字段含义见嵌套对象。';} },
+  saveGraph: { desc: function(v){return '当前最优方案的副本（saveGraph 指针）。搜到更好方案时会被覆盖更新。';} },
+  // === Fields inside graph/saveGraph objects ===
+  nChannels: { desc: function(v){return '已找到的 channel 数 = '+v+'（channel = 一条独立通信路径，环/树排列）';} },
+  bwIntra: { desc: function(v){const f=+v; if(f<=0) return '节点内带宽 0 GB/s（尚未搜到方案）'; return '节点内带宽 '+f+' GB/s（越大越好，NVLink 满带宽约 48）';} },
+  bwInter: { desc: function(v){const f=+v; if(f<=0) return '节点间带宽 0 GB/s'; return '节点间带宽 '+f+' GB/s';} },
+  nHops: { desc: function(v){const n=+v; if(n===0) return '总跳数 0（尚无方案）'; return '所有 channel 的总跳数 = '+n+'（越小越好，跳数多意味着延迟高）';} },
+  pattern: {
+    desc: '集合通信拓扑模式',
+    valueTip: function(v) {
+      const m = {1:'BALANCED_TREE（平衡树/双根）',2:'SPLIT_TREE（分裂树）',3:'TREE（普通树/单根）',4:'RING（环：每个 GPU 连前后两个邻居）',5:'NVLS（NVLink SHARP）',6:'COLLNET_DIRECT（CollNet 直连）'};
+      return m[+v] || '';
+    }
+  },
+  sameChannels: { desc: function(v){return (v===1)?'允许复用已有 channel 的 GPU 排列（加速）':'不复用，每个 channel 独立搜索';} },
+  minChannels: { desc: function(v){return '最少需要的 channel 数 = '+v;} },
+  maxChannels: { desc: function(v){return '最多尝试的 channel 数上限 = '+v;} },
+  typeIntra: { desc: function(v){const m={9:'NVLink',8:'PCIe'};return '节点内链路类型 = '+v+(m[v]?' ('+m[v]+')':'');} },
+  typeInter: { desc: function(v){const m={4:'IB/网络'};return '节点间链路类型 = '+v+(m[v]?' ('+m[v]+')':'');} },
+  // === Compute top-level ===
+  id: { desc: function(v){return '此 Compute 调用的编号 = '+v+'（对应 typeIntra 枚举）';} },
+  // === SearchRec/TryGpu/RecGpu scalars ===
+  time: { desc: function(v){const n=+v; if(n>=256) return '带宽预算 '+n+'（初始/满预算）'; if(n<=0) return '带宽预算 '+n+'（已耗尽，搜索失败）'; return '剩余带宽预算 '+n+'（初始 256，已扣 '+(256-n)+'）';} },
+  step: { desc: function(v){const n=+v; if(n===0) return '环的第 0 个位置（起点）'; if(n===8) return 'step='+n+'==ngpus，环已闭合！准备递归找下一个 channel'; return '环的第 '+n+' 个位置';} },
+  forcedOrder: {
+    desc: 'GPU 选择顺序的强制模式',
+    valueTip: function(v) {
+      const m = {0:'正常顺序：按候选列表逐个试',1:'强制按 PCI 顺序（GPU 0→1→2→...），用于第一个 channel 的暴力搜索',2:'重放：用之前 channel 找到的 GPU 排列，加速后续 channel 搜索'};
+      return m[+v] || '';
+    }
+  },
+  type: { desc: function(v){const m={'-1':'无（这是起点，没有上一跳）','0':'GPU','1':'NET（网络节点）'};return '上一跳设备类型 = '+v+(m[v]?'（'+m[v]+'）':'');} },
+  index: { desc: function(v){return v===-1?'无上一跳（起点）':'上一跳设备索引 = '+v;} },
+  g: { desc: function(v){return '当前选中的 GPU 编号 = '+v;} },
+  gpu_rank: { desc: function(v){return '当前要接入环的 GPU 编号 = '+v;} },
+  backToNet: { desc: function(v){return v===-1?'不需要回到网络节点':'需要回到第 '+v+' 个 NET';} },
+  backToFirstRank: { desc: function(v){const n=+v; if(n===-1) return '已闭环（环已回到起点 GPU）'; return '还差 '+n+' 步回到起点 GPU（从 ngpus-1=7 递减）';} },
+  // === TryGpu/RecGpu exit outputs ===
+  gpu_nonnull: { desc: function(v){return (v===1)?'成功选到 GPU':'未能选中 GPU（带宽不够或路径不通）';} },
+  node_nonnull: { desc: function(v){return (v===1)?'成功找到有效路径':'找不到有效路径（带宽不够或路径不通）';} },
+  copy: { desc: function(v){return (v===1)?'当前 graph 更优，已复制到 saveGraph（更新最优解）':'当前 graph 不更优，saveGraph 不变';} },
+  // === FollowPath ===
+  mult: { desc: function(v){const n=+v; const abs=Math.abs(n); const sign=n<0?'回溯：加回':'扣除'; if(abs===1) return sign+'满带宽'; if(abs===0) return '带宽为 0（链路不通）'; return sign+abs+'倍带宽';} },
+  type1: { desc: function(v){const m={'-1':'无（起点，没有上一跳）','0':'GPU','1':'PCI bridge','2':'NIC（网卡）','3':'NVSwitch'};return '路径起点设备类型 = '+v+(m[v]?'（'+m[v]+'）':'');} },
+  index1: { desc: function(v){return v===-1?'无（起点）':'路径起点设备索引 = '+v;} },
+  type2: { desc: function(v){const m={'0':'GPU','1':'PCI bridge','2':'NIC（网卡）','3':'NVSwitch'};return '路径终点设备类型 = '+v+(m[v]?'（'+m[v]+'）':'');} },
+  index2: { desc: function(v){return '路径终点设备索引 = '+v;} },
+  // === SearchInit ===
+  ngpus: { desc: function(v){return 'GPU 总数 = '+v;} },
+  inter: { desc: function(v){return (v===0)?'单节点通信（8 卡在同一机器）':'多节点通信（跨机器）';} },
+  maxBw: { desc: function(v){return '系统最大链路带宽 '+v+' GB/s';} },
+  totalBw: { desc: function(v){return '系统总带宽 '+v+' GB/s';} },
+  // === ReplayGetGpu ===
+  // step already covered above
+  // === SearchNextGpuSort ===
+  count: { desc: function(v){return '候选 GPU 数量 = '+v;} },
+  next: { desc: '按优先级排序的候选 GPU 列表' },
+  sortNet: { desc: function(v){return (v===1)?'按网络节点排序':'按 GPU 排序';} },
+  // === duration ===
+  dur: { desc: '函数执行耗时（TSC 时钟周期数）' },
+  // === return reason ===
+  reason: { desc: function(v){return '退出原因：'+v;} }
+};
+
+// Resolve a (key, value) pair to a tooltip string. Returns '' if no tooltip.
+// Priority: value-specific tip > desc (as function or string).
+function tooltipFor(key, value) {
+  const meta = ARG_META[key];
+  if (!meta) return '';
+  if (meta.valueTip) {
+    const t = meta.valueTip(value);
+    if (t) return t;
+  }
+  if (typeof meta.desc === 'function') return meta.desc(value);
+  return meta.desc || '';
+}
+
+let store;
+
+// === Parameter mode metadata ===
+// Marks each parameter as in (input-only), out (output-only), inout (modified in place),
+// or read (pure read, no modification). Used to render a colored prefix marker.
+// Key format: "funcId:key" to disambiguate same name across functions; fallback to bare key.
+const ARG_MODE = {
+  // Compute enter (id/pattern/minChannels/maxChannels are inputs)
+  'id': 'in', 'pattern': 'in', 'minChannels': 'in', 'maxChannels': 'in',
+  // graph/saveGraph as a whole: pointer params (inout — read and modified in place)
+  'graph': 'inout', 'saveGraph': 'inout',
+  // fields inside graph/saveGraph objects:
+  'nChannels': 'inout',     // read at entry, incremented when a channel completes
+  'bwIntra': 'inout',       // updated as channels are added (bandwidth accounting)
+  'bwInter': 'inout',
+  'nHops': 'inout',
+  'sameChannels': 'in', 'typeIntra': 'in', 'typeInter': 'in',
+  // SearchRec/TryGpu/RecGpu scalars
+  'time': 'inout',          // *time, decremented as bandwidth is consumed
+  'step': 'in', 'forcedOrder': 'in', 'type': 'in', 'index': 'in', 'g': 'in', 'gpu_rank': 'in',
+  'backToNet': 'in', 'backToFirstRank': 'inout',  // decremented as the ring closes
+  // outputs (exit-only)
+  'gpu_nonnull': 'out', 'node_nonnull': 'out', 'copy': 'out',
+  // SearchInit
+  'ngpus': 'in', 'inter': 'in', 'maxBw': 'out', 'totalBw': 'out',
+  // mult in FollowPath
+  'mult': 'in',
+  // SearchNextGpuSort
+  'count': 'out', 'next': 'out',
+  // duration
+  'dur': 'read',
+  // legacy _args wrapper for non-JSON records
+  '_args': 'read', '_value': 'read', '_raw': 'read',
+  'reason': 'read',
+};
+const MODE_MARK = {
+  in:    { ch: '▸', cls: 'mode-in',    label: '入参' },
+  out:   { ch: '◂', cls: 'mode-out',   label: '出参' },
+  inout: { ch: '◆', cls: 'mode-inout', label: '修改' },
+  read:  { ch: '·', cls: 'mode-read',  label: '只读' }
+};
+// For args in the EXIT block, default mode is 'out' (they're all return values).
+function modeFor(key, context) {
+  if (context === 'exit') return ARG_MODE[key] === 'inout' ? 'inout' : 'out';
+  return ARG_MODE[key] || 'in';
+}
+
+
+// fmtArgs: render args as HTML. If expanded=true, each arg on its own line and
+// nested object braces are split open (open brace end of line, close brace on its own line).
+// If diffBase is provided (an object from the enter side), fields whose value changed
+// are annotated with " → newValue" and highlighted.
+function fmtArgs(args, context, expanded=false, diffBase=null) {
+  if (!args) return '';
+  const parts = [];
+  const entries = Object.entries(args);
+  for (let i = 0; i < entries.length; i++) {
+    const [k, v] = entries[i];
+    const isLast = (i === entries.length - 1);
+    parts.push(fmtOneArg(k, v, context, expanded, 0, diffBase, isLast));
+  }
+  // Each fmtOneArg already appends its own comma; join with '' to avoid double commas
+  return parts.join('');
+}
+
+// Render a single key=value pair.
+//   expanded: if true, nested objects open brace on this line, fields indented on following lines, close brace on its own line.
+//   indent: current nesting depth (for padding-left in expanded mode).
+//   diffBase: the corresponding enter-side object (for exit diff highlighting). May be null.
+//   isLast: whether this arg is the last in its container (no trailing comma in expanded mode).
+function fmtOneArg(k, v, context, expanded=false, indent=0, diffBase=null, isLast=false) {
+  const pad = expanded ? ' style="padding-left:' + (indent*16) + 'px"' : '';
+  const comma = expanded ? (isLast ? '' : ',') : (isLast ? '' : ', ');
+  // Nested object
+  if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    const kTip = tooltipFor(k, v);
+    const kAttrs = kTip ? ' data-tip="' + escapeAttr(kTip) + '"' : '';
+    if (expanded) {
+      // open: k={  then each field on new line, then } on its own line
+      const innerEntries = Object.entries(v);
+      const innerParts = innerEntries.map(([ik, iv], idx) => {
+        return fmtOneArg(ik, iv, context, true, indent+1, diffBase ? diffBase[k] : null, idx === innerEntries.length-1);
+      });
+      return '<div' + pad + '><span class="k nested"' + kAttrs + '>' + k + '</span>=<span class="v-obj">{</span>' +
+             '<div style="padding-left:' + ((indent+1)*16) + 'px">' + innerParts.join('') + '</div>' +
+             '<div' + pad + '><span class="v-obj">}</span>' + comma + '</div>';
+    } else {
+      const inner = Object.entries(v).map(([ik, iv]) => fmtOneArg(ik, iv, context, false, 0, diffBase ? diffBase[k] : null, false)).join('');
+      return '<span class="k nested"' + kAttrs + '>' + k + '</span>=<span class="v-obj">{' + inner + '}</span>' + comma;
+    }
+  }
+  if (Array.isArray(v)) {
+    return '<div' + pad + '><span class="k">' + k + '</span>=<span class="v-arr">[' + v.join(', ') + ']</span>' + comma + '</div>';
+  }
+  // Scalar — check for diff (exit value vs enter value)
+  let cls = '';
+  // Escape HTML special chars in value for safe innerHTML insertion
+  const vStr = String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (vStr === 'true') cls = 'true';
+  else if (vStr === 'false') cls = 'false';
+  const kTip = tooltipFor(k, v);
+  const vTip = tooltipFor(k, v);
+  const kAttrs = kTip ? ' data-tip="' + escapeAttr(kTip) + '"' : '';
+  const vAttrs = vTip ? ' data-tip="' + escapeAttr(vTip) + '"' : '';
+  const mode = modeFor(k, context);
+  const mark = MODE_MARK[mode] || MODE_MARK.in;
+  const modeTip = mark.label + '（' + k + '）';
+  const modeMark = '<span class="mode-mark ' + mark.cls + '" data-tip="' + escapeAttr(modeTip) + '">' + mark.ch + '</span>';
+  // diff: if diffBase has this key and value differs, annotate
+  let diffHtml = '';
+  if (diffBase && typeof diffBase === 'object' && k in diffBase) {
+    const oldVal = diffBase[k];
+    if (oldVal !== v && JSON.stringify(oldVal) !== JSON.stringify(v)) {
+      const oldStr = String(oldVal).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      diffHtml = '<span class="diff-old"> (was ' + oldStr + ')</span><span class="diff-arrow"> →</span>';
+      cls += ' diff-changed';
+    }
+  }
+  const reasonCls = (k === 'reason') ? ' reason-val' : '';
+  const line = modeMark + '<span class="k"' + kAttrs + '>' + k + '</span>=<span class="v ' + cls + reasonCls + '"' + vAttrs + '>' + vStr + '</span>' + diffHtml + comma;
+  return expanded ? '<div' + pad + '>' + line + '</div>' : line;
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function fmtDur(d) {
+  if (d < 0) return 'dur=?';
+  if (d < 1000) return `dur=${d}`;
+  if (d < 1000000) return `dur=${(d/1000).toFixed(1)}K`;
+  if (d < 1000000000) return `dur=${(d/1000000).toFixed(1)}M`;
+  return `dur=${(d/1000000000).toFixed(2)}G`;
+}
+
+function renderNode(index) {
+  const node = store.cache.get(index);
+  if (!node) return `<div class="node" data-idx="${index}"><span class="toggle">!</span><div class="content">not in cache (index ${index})</div></div>`;
+  const fnName = FN_NAMES[node.funcId] || `fn${node.funcId}`;
+  const cls = fnName.replace('ncclTopo', '');
+  const hasChildren = node.childCount > 0 && node.firstChildIndex !== 0xFFFFFFFF;
+  const toggleChar = hasChildren ? '▶' : '·';
+  const onPath = RECURSIVE_PATH.indexOf(index) >= 0;
+  const pathCls = onPath ? ' path-node' : '';
+  const marker = PHASE_MARKERS[index];
+  const markerCls = marker ? ' highlight' : '';
+  let html = `<div class="node${pathCls}${markerCls}" data-idx="${index}">`;
+  html += `<span class="toggle ${hasChildren?'':'leaf'}" onclick="toggleNode(${index}, this)">${toggleChar}</span>`;
+  html += `<div class="content"><div class="line">`;
+  html += `<span class="callid">#${node.callId}</span> `;
+  html += `<span class="fn ${cls}"${FN_META[node.funcId]?` data-tip="${escapeAttr(FN_META[node.funcId])}"`:''}>${fnName}</span>`;
+  if (node.enterArgs) {
+    html += `<span class="args" id="args-${index}">(<span class="args-toggle" onclick="toggleArgsExpand(${index}, 'enter', this)">⤢</span>${fmtArgs(node.enterArgs, 'enter')})</span>`;
+  }
+  if (node.exitArgs) {
+    html += `<span class="exit" id="exit-${index}">→ [<span class="args-toggle" onclick="toggleArgsExpand(${index}, 'exit', this)">⤢</span>${fmtArgs(node.exitArgs, 'exit', false, node.enterArgs)}]</span>`;
+  } else if (!hasChildren) {
+    html += `<span class="exit">→ (no exit)</span>`;
+  }
+  html += `<span class="dur">${fmtDur(node.duration)}</span>`;
+  if (node.subtreeSize > 1 && !hasChildren) {
+    // shouldn't happen, but just in case
+    html += `<span class="collapsed-info">⤷ ${node.subtreeSize-1} descendants</span>`;
+  }
+  html += `</div></div></div>`;
+  if (hasChildren) {
+    html += `<div class="children hidden" data-parent="${index}"></div>`;
+  }
+  return html;
+}
+
+async function toggleNode(index, toggleEl) {
+  const childContainer = toggleEl.parentElement.nextElementSibling;
+  if (!childContainer) return;
+  if (childContainer.classList.contains('hidden')) {
+    // expanding
+    if (childContainer.children.length === 0) {
+      toggleEl.classList.add('loading');
+      toggleEl.textContent = '…';
+      try {
+        const { node, children } = await store.fetchNodeAndChildren(index);
+        // fetch args for each child in parallel
+        await Promise.all(children.map(ci => {
+          const cn = store.cache.get(ci);
+          return cn ? store.fetchArgs(cn) : Promise.resolve();
+        }));
+        let html = '';
+        for (const ci of children) html += renderNode(ci);
+        childContainer.innerHTML = html;
+        // prefetch grandchildren in background
+        store.prefetchGrandchildren(index).catch(()=>{});
+      } catch (e) {
+        childContainer.innerHTML = `<div class="node" style="color:#c00">load error: ${e.message}</div>`;
+      }
+      toggleEl.classList.remove('loading');
+      toggleEl.textContent = '▼';
+    } else {
+      toggleEl.textContent = '▼';
+    }
+    childContainer.classList.remove('hidden');
+  } else {
+    childContainer.classList.add('hidden');
+    toggleEl.textContent = '▶';
+  }
+}
+
+// === Tooltip logic ===
+// Hover on any [data-tip] element shows #tooltip near the cursor.
+(function(){
+  const tip = document.getElementById('tooltip');
+  let hideTimer = null;
+  function showTip(el, e) {
+    const text = el.getAttribute('data-tip');
+    if (!text) { hideTip(); return; }
+    clearTimeout(hideTimer);
+    // split: first line is key/short, rest is detail
+    const parts = text.split(' — ');
+    let html = '';
+    if (parts.length > 1) {
+      html = `<div class="tip-key">${parts[0]}</div><div class="tip-val">${parts.slice(1).join(' — ')}</div>`;
+    } else {
+      html = `<div>${text}</div>`;
+    }
+    tip.innerHTML = html;
+    tip.classList.add('show');
+    positionTip(e);
+  }
+  function positionTip(e) {
+    const pad = 12;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = e.clientX + 16, y = e.clientY + 16;
+    if (x + w + pad > window.innerWidth) x = e.clientX - w - 16;
+    if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  function hideTip() {
+    tip.classList.remove('show');
+  }
+  // use mouseover/mouseout (delegated) so it works for dynamically-rendered nodes
+  document.addEventListener('mouseover', function(e){
+    const el = e.target.closest('[data-tip]');
+    if (el) showTip(el, e);
+  });
+  document.addEventListener('mousemove', function(e){
+    if (tip.classList.contains('show')) positionTip(e);
+  });
+  document.addEventListener('mouseout', function(e){
+    const el = e.target.closest('[data-tip]');
+    if (el) hideTimer = setTimeout(hideTip, 80);
+  });
+})();
+
+async function init() {
+  store = new NodeStore('callgraph_indexed.bin');
+  try {
+    const hdr = await store.fetchHeader();
+    document.getElementById('meta').textContent =
+      `${hdr.totalNodes.toLocaleString()} nodes | max depth from data | roots: ${hdr.roots.length}`;
+    let html = '';
+    for (const r of hdr.roots) {
+      // fetch each root + its args
+      await store.fetchNode(r);
+      await store.fetchArgs(store.cache.get(r));
+      html += renderNode(r);
+    }
+    document.getElementById('tree').innerHTML = html;
+    // auto-expand first level
+    if (document.getElementById('autoExpand').checked) {
+      for (const r of hdr.roots) {
+        const toggle = document.querySelector(`.node[data-idx="${r}"] > .toggle`);
+        if (toggle && !toggle.classList.contains('leaf')) await toggleNode(r, toggle);
+      }
+    }
+    store._updateStatus();
+  } catch (e) {
+    document.getElementById('tree').innerHTML = `<div style="color:#c00;padding:20px">Init failed: ${e.message}<br><br>Make sure callgraph_indexed.bin is served from the same HTTP origin as this HTML (Range requests need HTTP, not file://).</div>`;
+  }
+}
+
+// BFS-index path from Compute(root) through the main recursion chain to the deepest leaf.
+// Computed by find_recursion_path_v2.py + subtree-max-depth walk on the 256MB rank-0 trace.
+// Covers: first channel brute-force (PCI order) -> recursive SearchRec closure -> Replay path.
+const RECURSIVE_PATH = [1,12,116,506,1511,2583,3374,4059,4858,5554,6770,8389,12135,17003,27403,37503,56310,68369,84687,98921];
+// Indices where the algorithm transitions phase (highlighted with markers)
+const PHASE_MARKERS = {
+  12:    'SearchRec start (brute-force first channel)',
+  84687: 'step==ngpus closure (ring complete)',
+  98921:'RECURSIVE CALL (SearchRec -> SearchRec, nChannels 0->1)'
+};
+
+async function expandToRecursive() {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '展开中...';
+  try {
+    // Render root using the standard renderNode (shows ▶ toggle, children hidden by default).
+    const rootIdx = RECURSIVE_PATH[0];
+    const rootNode = store.cache.get(rootIdx) || await store.fetchNode(rootIdx);
+    await store.fetchArgs(rootNode);
+    const tree = document.getElementById('tree');
+    tree.innerHTML = renderNode(rootIdx);
+    // Walk down the path: expand each path node (shows ALL its children),
+    // then continue to the path child. Siblings stay collapsed by default.
+    // This is linear growth: depth × avg-children-per-node.
+    for (let i = 0; i < RECURSIVE_PATH.length - 1; i++) {
+      const parentIdx = RECURSIVE_PATH[i];
+      const toggle = document.querySelector(`.node[data-idx="${parentIdx}"] > .toggle`);
+      if (toggle && (toggle.textContent === '▶' || toggle.classList.contains('leaf') === false)) {
+        // expand via the standard toggleNode (fetches children, renders all of them)
+        if (toggle.textContent === '▶') {
+          await toggleNode(parentIdx, toggle);
+        }
+      }
+    }
+    // Mark phase-transition nodes and the leaf
+    for (const idx of Object.keys(PHASE_MARKERS).map(Number)) {
+      const el = document.querySelector(`.node[data-idx="${idx}"]`);
+      if (el) el.classList.add('highlight');
+    }
+    const target = document.querySelector(`.node[data-idx="${RECURSIVE_PATH[RECURSIVE_PATH.length-1]}"]`);
+    if (target) {
+      target.classList.add('highlight');
+      target.scrollIntoView({block: 'center'});
+    }
+    store._updateStatus();
+  } catch (e) {
+    alert('expand failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '跳到第一次递归';
+  }
+}
+
+// Like renderNode, but only renders the single path child (not all siblings).
+function renderPathNode(index, isLast) {
+  const node = store.cache.get(index);
+  if (!node) return `<div class="node">not in cache: ${index}</div>`;
+  const fnName = FN_NAMES[node.funcId] || `fn${node.funcId}`;
+  const cls = fnName.replace('ncclTopo', '');
+  const pathPos = RECURSIVE_PATH.indexOf(index);
+  const childIdx = pathPos >= 0 && pathPos < RECURSIVE_PATH.length - 1 ? RECURSIVE_PATH[pathPos + 1] : null;
+  const hasChildren = node.childCount > 0 && node.firstChildIndex !== 0xFFFFFFFF;
+  const isLeaf = isLast || !hasChildren;
+  const marker = PHASE_MARKERS[index] || (isLast ? 'LEAF (end of trace)' : null);
+  let html = `<div class="node${marker?' highlight':''}" data-idx="${index}">`;
+  // toggle char
+  if (isLeaf) {
+    html += `<span class="toggle leaf" style="color:#e67e22;font-weight:bold">★</span>`;
+  } else if (childIdx !== null) {
+    // path continues: show ▼ (path child pre-rendered below). Click toggles all-children view.
+    html += `<span class="toggle" onclick="toggleNodeChildren(${index}, this)">▼</span>`;
+  } else {
+    html += `<span class="toggle" onclick="toggleNodeChildren(${index}, this)">▶</span>`;
+  }
+  html += `<div class="content"><div class="line">`;
+  html += `<span class="depth-tag">d${node.depth}</span> `;
+  html += `<span class="callid">#${node.callId}</span> `;
+  html += `<span class="fn ${cls}"${FN_META[node.funcId]?` data-tip="${escapeAttr(FN_META[node.funcId])}"`:''}>${fnName}</span>`;
+  if (node.enterArgs) {
+    html += `<span class="args" id="args-${index}">(<span class="args-toggle" onclick="toggleArgsExpand(${index}, 'enter', this)">⤢</span>${fmtArgs(node.enterArgs, 'enter')})</span>`;
+  }
+  if (node.exitArgs) {
+    html += `<span class="exit" id="exit-${index}">→ [<span class="args-toggle" onclick="toggleArgsExpand(${index}, 'exit', this)">⤢</span>${fmtArgs(node.exitArgs, 'exit', false, node.enterArgs)}]</span>`;
+  }
+  html += `<span class="dur">${fmtDur(node.duration)}</span>`;
+  if (hasChildren && node.childCount > 1) {
+    html += `<span class="sibling-hint" onclick="togglePathSiblings(${index}, this)" data-tip="路径模式只显示了 ${node.childCount} 个子调用中的 1 个（递归推进的那条）。点击展开全部 ${node.childCount} 个子调用（含扣带宽、回溯等同级调用）。">+${node.childCount - 1} 同级调用</span>`;
+  }
+  if (marker) {
+    html += `<span class="marker" title="${marker}">⟿ ${marker}</span>`;
+  }
+  html += `</div></div></div>`;
+  // pre-render the path child container (only that child, visible)
+  if (childIdx !== null) {
+    html += `<div class="children" data-parent="${index}" data-pathchild="${childIdx}"></div>`;
+  }
+  return html;
+}
+
+// After rendering path nodes, fill each path-child container with the single path child.
+// Iterative: walk down the chain from the first path-child container.
+async function fillPathChildren() {
+  // The root node was rendered with a sibling <div class="children" data-pathchild> next to it.
+  // Find that first container directly under #tree.
+  let container = document.querySelector('#tree > .children[data-pathchild]');
+  let guard = 0;
+  while (container && guard++ < 100) {
+    const childIdx = parseInt(container.getAttribute('data-pathchild'));
+    if (isNaN(childIdx)) break;
+    const childNode = store.cache.get(childIdx) || await store.fetchNode(childIdx);
+    await store.fetchArgs(childNode);
+    const isLast = childIdx === RECURSIVE_PATH[RECURSIVE_PATH.length-1];
+    container.innerHTML = renderPathNode(childIdx, isLast);
+    // descend: the just-rendered child is <div class="node"> followed by <div class="children" data-pathchild>.
+    // both are direct children of the current container.
+    container = container.querySelector(':scope > .children[data-pathchild]');
+  }
+}
+
+// Toggle the children of a path node between "only path child" and "all children".
+// This is triggered by the ▼ toggle on the node itself.
+async function toggleNodeChildren(index, el) {
+  const node = el.closest('.node');
+  // the node's child container is its next sibling
+  const container = node ? node.nextElementSibling : null;
+  if (!container || !container.classList.contains('children')) return;
+  const showingAll = container.getAttribute('data-show') === 'all';
+  if (showingAll) {
+    // back to path-only
+    const pathChildIdx = container.getAttribute('data-pathchild');
+    if (pathChildIdx) {
+      const cn = store.cache.get(parseInt(pathChildIdx));
+      container.innerHTML = cn ? renderPathNode(parseInt(pathChildIdx), parseInt(pathChildIdx) === RECURSIVE_PATH[RECURSIVE_PATH.length-1]) : '';
+      await fillPathChildrenFrom(container);
+    } else {
+      container.innerHTML = '';
+    }
+    container.setAttribute('data-show', 'path');
+    el.textContent = '▼';
+  } else {
+    // show ALL children of this node
+    el.classList.add('loading'); el.textContent = '…';
+    const { children } = await store.fetchNodeAndChildren(index);
+    await Promise.all(children.map(ci => {
+      const cn = store.cache.get(ci); return cn ? store.fetchArgs(cn) : Promise.resolve();
+    }));
+    let html = '';
+    for (const ci of children) {
+      html += renderPathNode(ci, ci === RECURSIVE_PATH[RECURSIVE_PATH.length-1]);
+      const pathPos = RECURSIVE_PATH.indexOf(ci);
+      if (pathPos >= 0 && pathPos < RECURSIVE_PATH.length - 1) {
+        html += `<div class="children" data-parent="${ci}" data-pathchild="${RECURSIVE_PATH[pathPos+1]}"></div>`;
+      }
+    }
+    container.innerHTML = html;
+    container.setAttribute('data-show', 'all');
+    await fillPathChildrenFrom(container);
+    el.classList.remove('loading'); el.textContent = '▼';
+  }
+}
+
+// Toggle between "only path child" and "all siblings" for a path node.
+// The hint lives ON the path node; we operate on its PARENT container
+// (which holds siblings of this node).
+async function togglePathSiblings(index, el) {
+  const node = el.closest('.node');
+  const parentContainer = node ? node.parentElement : null;
+  if (!parentContainer || !parentContainer.classList.contains('children')) return;
+  const showingAll = parentContainer.getAttribute('data-show') === 'all';
+  if (showingAll) {
+    // back to path-only: render only the path child (if this node is on the path)
+    const pathChildIdx = parentContainer.getAttribute('data-pathchild');
+    if (pathChildIdx) {
+      const cn = store.cache.get(parseInt(pathChildIdx));
+      parentContainer.innerHTML = cn ? renderPathNode(parseInt(pathChildIdx), parseInt(pathChildIdx) === RECURSIVE_PATH[RECURSIVE_PATH.length-1]) : '';
+      await fillPathChildrenFrom(parentContainer);
+    }
+    parentContainer.setAttribute('data-show', 'path');
+  } else {
+    // show all siblings: fetch children of the PARENT node (index = data-parent)
+    const parentIdx = parseInt(parentContainer.getAttribute('data-parent'));
+    el.classList.add('loading'); el.textContent = '…';
+    const { children } = await store.fetchNodeAndChildren(parentIdx);
+    await Promise.all(children.map(ci => {
+      const cn = store.cache.get(ci); return cn ? store.fetchArgs(cn) : Promise.resolve();
+    }));
+    let html = '';
+    for (const ci of children) {
+      html += renderPathNode(ci, ci === RECURSIVE_PATH[RECURSIVE_PATH.length-1]);
+      const pathPos = RECURSIVE_PATH.indexOf(ci);
+      if (pathPos >= 0 && pathPos < RECURSIVE_PATH.length - 1) {
+        html += `<div class="children" data-parent="${ci}" data-pathchild="${RECURSIVE_PATH[pathPos+1]}"></div>`;
+      }
+    }
+    parentContainer.innerHTML = html;
+    parentContainer.setAttribute('data-show', 'all');
+    await fillPathChildrenFrom(parentContainer);
+    el.classList.remove('loading'); el.textContent = '▼';
+  }
+}
+
+// Like fillPathChildren but starts from a given container (refills nested path-child containers).
+async function fillPathChildrenFrom(startContainer) {
+  let container = startContainer.querySelector(':scope > .children[data-pathchild]:empty');
+  let guard = 0;
+  while (container && guard++ < 100) {
+    const childIdx = parseInt(container.getAttribute('data-pathchild'));
+    if (isNaN(childIdx)) break;
+    const childNode = store.cache.get(childIdx) || await store.fetchNode(childIdx);
+    await store.fetchArgs(childNode);
+    const isLast = childIdx === RECURSIVE_PATH[RECURSIVE_PATH.length-1];
+    container.innerHTML = renderPathNode(childIdx, isLast);
+    container = container.querySelector(':scope > .children[data-pathchild]:empty');
+  }
+}
+
+// Toggle an args/exit block between compact (single line) and expanded (multi-line).
+// which: 'enter' or 'exit'. The toggle button is inside the span, so innerHTML rebuild includes it.
+function toggleArgsExpand(index, which) {
+  const el = document.getElementById((which === 'enter' ? 'args-' : 'exit-') + index);
+  if (!el) return;
+  const node = store.cache.get(index);
+  if (!node) return;
+  const isExpanded = el.classList.contains('expanded');
+  const toggleHtml = '<span class="args-toggle" onclick="toggleArgsExpand(' + index + ', \'' + which + '\', this)">' + (isExpanded ? '⤢' : '⤤') + '</span>';
+  if (isExpanded) {
+    // collapse back to compact
+    el.classList.remove('expanded');
+    if (which === 'enter') {
+      el.innerHTML = '(' + toggleHtml + fmtArgs(node.enterArgs, 'enter', false) + ')';
+    } else {
+      el.innerHTML = '→ [' + toggleHtml + fmtArgs(node.exitArgs, 'exit', false, node.enterArgs) + ']';
+    }
+  } else {
+    // expand to multi-line — divs auto-wrap, no <br> needed
+    el.classList.add('expanded');
+    if (which === 'enter') {
+      el.innerHTML = '(' + toggleHtml + fmtArgs(node.enterArgs, 'enter', true) + ')';
+    } else {
+      el.innerHTML = '→ [' + toggleHtml + fmtArgs(node.exitArgs, 'exit', true, node.enterArgs) + ']';
+    }
+  }
+}
+
+function expandVisible() {
+  document.querySelectorAll('.toggle').forEach(t => {
+    if (t.textContent === '▶' && !t.classList.contains('leaf')) t.click();
+  });
+}
+function collapseAll() {
+  document.querySelectorAll('.children').forEach(c => c.classList.add('hidden'));
+  document.querySelectorAll('.toggle').forEach(t => { if (t.textContent === '▼') t.textContent = '▶'; });
+}
+
+document.getElementById('search').addEventListener('input', function(e) {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) {
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('highlight','dimmed'));
+    return;
+  }
+  document.querySelectorAll('.node').forEach(n => {
+    if (n.textContent.toLowerCase().includes(q)) { n.classList.add('highlight'); n.classList.remove('dimmed'); }
+    else { n.classList.add('dimmed'); n.classList.remove('highlight'); }
+  });
+});
+
+init();
+</script>
+</body>
+</html>

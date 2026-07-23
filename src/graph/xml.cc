@@ -441,6 +441,7 @@ ncclResult_t ncclTopoSetAttrFromSys(struct ncclXmlNode* pciNode, const char* pat
   char strValue[MAX_STR_LEN];
   NCCLCHECK(ncclOsTopoGetStrFromSys(path, fileName, strValue, MAX_STR_LEN));
   if (strValue[0] != '\0') NCCLCHECK(xmlSetAttr(pciNode, attrName, strValue));
+  YT_TRACE(NCCL_GRAPH, "[SRC] pci_sysfs path=%s/%s %s=%s", path, fileName, attrName, strValue);
   TRACE(NCCL_GRAPH, "Read from sys %s/%s -> %s=%s", path, fileName, attrName, strValue);
   return ncclSuccess;
 }
@@ -464,6 +465,7 @@ ncclResult_t ncclTopoSetAttrFromNvml(struct ncclXmlNode* pciNode, nvmlDevice_t d
   if (strValue[0] == '\0') return ncclInternalError;
 
   NCCLCHECK(xmlSetAttr(pciNode, attrName, strValue));
+  YT_TRACE(NCCL_GRAPH, "[SRC] pci_nvml %s=%s", attrName, strValue);
   TRACE(NCCL_GRAPH, "Read from NVML %s=%s", attrName, strValue);
   return ncclSuccess;
 }
@@ -483,7 +485,11 @@ ncclResult_t ncclTopoGetXmlFromCpu(struct ncclXmlNode* cpuNode, struct ncclXml* 
     char affinityStr[MAX_STR_LEN];
     NCCLCHECK(ncclOsGetNumaNodeAffinity(nodeNumber, affinityStr, sizeof(affinityStr)));
     NCCLCHECK(xmlSetAttr(cpuNode, "affinity", affinityStr));
+    YT_TRACE(NCCL_GRAPH, "[SRC] cpu_affinity numa=%s affinity=%s", numaId, affinityStr);
   }
+
+  const char* numaId;
+  NCCLCHECK(xmlGetAttr(cpuNode, "numaid", &numaId));
 
   NCCLCHECK(xmlGetAttrIndex(cpuNode, "arch", &index));
   if (index == -1) {
@@ -527,6 +533,7 @@ ncclResult_t ncclTopoGetXmlFromCpu(struct ncclXmlNode* cpuNode, struct ncclXml* 
     strncpy(vendor, cpuid0.vendor, 12);
     vendor[12] = '\0';
     NCCLCHECK(xmlSetAttr(cpuNode, "vendor", vendor));
+    YT_TRACE(NCCL_GRAPH, "[SRC] cpu_cpuid vendor=%s", vendor);
   }
 
   NCCLCHECK(xmlGetAttrIndex(cpuNode, "familyid", &index));
@@ -556,7 +563,26 @@ ncclResult_t ncclTopoGetXmlFromCpu(struct ncclXmlNode* cpuNode, struct ncclXml* 
     int modelId = cpuid1.modelId + (cpuid1.extModelId << 4);
     NCCLCHECK(xmlSetAttrInt(cpuNode, "familyid", familyId));
     NCCLCHECK(xmlSetAttrInt(cpuNode, "modelid", modelId));
+    YT_TRACE(NCCL_GRAPH, "[SRC] cpu_cpuid family=%d model=%d", familyId, modelId);
   }
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
+  {
+    const char* arch = "?";
+    xmlGetAttr(cpuNode, "arch", &arch);
+    const char* cpuVendor = "?";
+    xmlGetAttr(cpuNode, "vendor", &cpuVendor);
+    int fam = -1, modl = -1;
+    xmlGetAttrInt(cpuNode, "familyid", &fam);
+    xmlGetAttrInt(cpuNode, "modelid", &modl);
+    const char* aff = "?";
+    xmlGetAttr(cpuNode, "affinity", &aff);
+    YT_TRACE(NCCL_GRAPH, "[SCAN] cpu numa=%s arch=%s vendor=%s family=%d model=%d affinity=%s",
+      numaId ? numaId : "?", arch, cpuVendor, fam, modl, aff);
+  }
+#else
+  YT_TRACE(NCCL_GRAPH, "[SCAN] cpu numa=%s", numaId ? numaId : "?");
 #endif
   return ncclSuccess;
 }
@@ -670,9 +696,11 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
         };
         if (linkGen <= 6) {
           NCCLCHECKGOTO(xmlSetAttr(pciNode, "link_speed", speeds[linkGen]), ret, exit);
+          YT_TRACE(NCCL_GRAPH, "[SRC] pci_link_speed nvml busid=%s link_speed=%s", busId, speeds[linkGen]);
         }
       } else {
         NCCLCHECKGOTO(xmlSetAttr(pciNode, "link_speed", "16.0 GT/s"), ret, exit);
+        YT_TRACE(NCCL_GRAPH, "[SRC] pci_link_speed nvml_fallback busid=%s", busId);
       }
     }
 #if NCCL_OS_LINUX
@@ -685,8 +713,9 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
       float portSpeed = FLT_MAX;
       NCCLCHECKGOTO(ncclOsTopoGetStrFromSys(path, "../max_link_speed", portSpeedStr, sizeof(portSpeedStr)), ret, exit);
       sscanf(portSpeedStr, "%f GT/s", &portSpeed);
-      NCCLCHECKGOTO(xmlSetAttr(pciNode, "link_speed", portSpeed < deviceSpeed ? portSpeedStr : deviceSpeedStr), ret,
-                    exit);
+      const char* chosenSpeed = portSpeed < deviceSpeed ? portSpeedStr : deviceSpeedStr;
+      NCCLCHECKGOTO(xmlSetAttr(pciNode, "link_speed", chosenSpeed), ret, exit);
+      YT_TRACE(NCCL_GRAPH, "[SRC] pci_link_speed sysfs busid=%s link_speed=%s", busId, chosenSpeed);
     }
 #endif
     else {
@@ -715,7 +744,9 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
       int deviceWidth = strtol(strValue, NULL, 0);
       NCCLCHECKGOTO(ncclOsTopoGetStrFromSys(path, "../max_link_width", strValue, MAX_STR_LEN), ret, exit);
       int portWidth = strtol(strValue, NULL, 0);
-      NCCLCHECKGOTO(xmlSetAttrInt(pciNode, "link_width", std::min(deviceWidth, portWidth)), ret, exit);
+      int chosenWidth = std::min(deviceWidth, portWidth);
+      NCCLCHECKGOTO(xmlSetAttrInt(pciNode, "link_width", chosenWidth), ret, exit);
+      YT_TRACE(NCCL_GRAPH, "[SRC] pci_link_width sysfs busid=%s link_width=%d", busId, chosenWidth);
     }
 #endif
     else {
@@ -904,6 +935,7 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
   if (index == -1) {
     NCCLCHECK(ncclNvmlDeviceGetIndex(nvmlDev, (unsigned int*)&dev));
     NCCLCHECK(xmlSetAttrInt(gpuNode, "dev", dev));
+    YT_TRACE(NCCL_GRAPH, "[SRC] gpu_dev nvml dev=%d", dev);
   }
   NCCLCHECK(xmlGetAttrInt(gpuNode, "dev", &dev));
   if (dev == -1) {
@@ -919,12 +951,20 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
       CUDACHECK(cudaGetDeviceProperties(&devProp, dev));
       cudaMajor = devProp.major;
       cudaMinor = devProp.minor;
+      YT_TRACE(NCCL_GRAPH, "[SRC] gpu_sm cuda dev=%d sm=%d", dev, cudaMajor * 10 + cudaMinor);
     } else {
       NCCLCHECK(ncclNvmlDeviceGetCudaComputeCapability(nvmlDev, &cudaMajor, &cudaMinor));
+      YT_TRACE(NCCL_GRAPH, "[SRC] gpu_sm nvml dev=%d sm=%d", dev, cudaMajor * 10 + cudaMinor);
     }
-    NCCLCHECK(xmlSetAttrInt(gpuNode, "sm", cudaMajor * 10 + cudaMinor));
+      NCCLCHECK(xmlSetAttrInt(gpuNode, "sm", cudaMajor * 10 + cudaMinor));
   }
   int sm;
+  NCCLCHECK(xmlGetAttrInt(gpuNode, "sm", &sm));
+  {
+    const char* busIdStr = "?";
+    if (pciNode) xmlGetAttr(pciNode, "busid", &busIdStr);
+    YT_TRACE(NCCL_GRAPH, "[SCAN] gpu dev=%d sm=%d busid=%s", dev, sm, busIdStr);
+  }
   NCCLCHECK(xmlGetAttrInt(gpuNode, "sm", &sm));
 
   struct ncclXmlNode* nvlNode = NULL;
@@ -1067,6 +1107,26 @@ ncclResult_t ncclTopoFillGpu(struct ncclXml* xml, const char* busId, struct nccl
   NCCLCHECK(ncclTopoGetPciNode(xml, busId, &node));
   NCCLCHECK(xmlSetAttrIfUnset(node, "class", "0x03"));
   NCCLCHECK(ncclTopoGetXmlFromSys(node, xml));
+  {
+    const char* busIdStr = "?";
+    const char* classStr = "?";
+    const char* vendor = "?";
+    const char* device = "?";
+    const char* subVendor = "?";
+    const char* subDevice = "?";
+    const char* linkSpeed = "?";
+    const char* linkWidth = "?";
+    xmlGetAttr(node, "busid", &busIdStr);
+    xmlGetAttr(node, "class", &classStr);
+    xmlGetAttr(node, "vendor", &vendor);
+    xmlGetAttr(node, "device", &device);
+    xmlGetAttr(node, "subsystem_vendor", &subVendor);
+    xmlGetAttr(node, "subsystem_device", &subDevice);
+    xmlGetAttr(node, "link_speed", &linkSpeed);
+    xmlGetAttr(node, "link_width", &linkWidth);
+    YT_TRACE(NCCL_GRAPH, "[SCAN] pci busid=%s class=%s vendor=%s device=%s subven=%s subdev=%s link=%s width=%s",
+      busIdStr, classStr, vendor, device, subVendor, subDevice, linkSpeed, linkWidth);
+  }
   nvmlDevice_t nvmlDev;
   NCCLCHECK(ncclNvmlDeviceGetHandleByPciBusId(busId, &nvmlDev));
   NCCLCHECK(ncclTopoGetXmlFromGpu(node, nvmlDev, xml, gpuNode));

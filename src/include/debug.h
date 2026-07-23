@@ -94,6 +94,8 @@ extern char ncclLastError[];
 #define TRACE_LOC(FLAGS, fmt, ...)
 #endif
 
+#define YT_TRACE(FLAGS, fmt, ...) INFO(FLAGS, "[YT-TRACE] " fmt, ##__VA_ARGS__)
+
 void ncclSetThreadName(std::thread& thread, const char* fmt, ...);
 #ifdef __cplusplus
 extern "C" {

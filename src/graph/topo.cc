@@ -108,6 +108,8 @@ ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNo
   system->nodes[type].count++;
   n->type = type;
   n->id = id;
+  // Log node creation - only type and id (fields vary by type, filled later)
+  YT_TRACE(NCCL_GRAPH, "[TOPO] node type=%d id=0x%lx", type, NCCL_TOPO_ID_LOCAL_ID(id));
   if (type == GPU) {
     n->gpu.dev = NCCL_TOPO_UNDEF;
     n->gpu.rank = NCCL_TOPO_UNDEF;
@@ -179,6 +181,18 @@ ncclResult_t ncclTopoConnectNodes(struct ncclTopoNode* node, struct ncclTopoNode
   link->type = type;
   link->remNode = remNode;
   link->bw += bw;
+
+  // YT-TRACE: physical link + node details
+  {
+    int from_dev = (node->type == GPU) ? node->gpu.dev : -1;
+    int to_dev = (remNode->type == GPU) ? remNode->gpu.dev : -1;
+    float final_bw = link->bw;
+    // Only log the link, node creation is logged in ncclTopoCreateNode
+    YT_TRACE(NCCL_GRAPH, "[TOPO] link from_type=%d from_dev=%d from_id=0x%lx to_type=%d to_dev=%d to_id=0x%lx link_type=%d bw=%.0f total_bw=%.0f",
+             node->type, from_dev, NCCL_TOPO_ID_LOCAL_ID(node->id),
+             remNode->type, to_dev, NCCL_TOPO_ID_LOCAL_ID(remNode->id),
+             type, bw, final_bw);
+  }
 
   // Sort links in BW descending order
   struct ncclTopoLink linkSave;
@@ -514,6 +528,8 @@ ncclResult_t ncclTopoAddGpu(struct ncclXmlNode* xmlGpu, struct ncclTopoSystem* s
   NCCLCHECK(xmlGetAttrInt(xmlGpu, "dev", &gpu->gpu.dev));
   NCCLCHECK(xmlGetAttrInt(xmlGpu, "gdr", &gpu->gpu.gdrSupport));
   NCCLCHECK(xmlGetAttrIntDefault(xmlGpu, "mlopart", &gpu->gpu.mloPart, NCCL_TOPO_UNDEF));
+  // Log GPU info with device number and hex ID (after dev is set)
+  YT_TRACE(NCCL_GRAPH, "[TOPO] gpu dev=%d id=0x%lx rank=%d cc=%d gdr=%d", gpu->gpu.dev, NCCL_TOPO_ID_LOCAL_ID(gpu->id), gpu->gpu.rank, gpu->gpu.cudaCompCap, gpu->gpu.gdrSupport);
   // Do not go any further, nvlinks will be added in a second pass
   return ncclSuccess;
 }
@@ -1806,6 +1822,11 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
     NCCLCHECKGOTO(xmlSetAttrInt(node, "rank", comm->rank), ret, fail);
     NCCLCHECKGOTO(xmlInitAttrInt(node, "gdr", comm->peerInfo[comm->rank].gdrSupport), ret, fail);
     NCCLCHECKGOTO(xmlSetAttrInt(node, "mlopart", comm->peerInfo[comm->rank].mloPart), ret, fail);
+    {
+      int gdrVal = 0;
+      xmlGetAttrInt(node, "gdr", &gdrVal);
+      YT_TRACE(NCCL_GRAPH, "[RANK] gpu rank=%d gdr=%d mlopart=%d", comm->rank, gdrVal, comm->peerInfo[comm->rank].mloPart);
+    }
   }
 
   // Auto-detect NICs if needed, net/gin/collnet share the same xml/graph nodes.
